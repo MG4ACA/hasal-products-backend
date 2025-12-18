@@ -1,0 +1,23 @@
+{
+  "development": {
+    "username": "root",
+    "password": "your_password_here",
+    "database": "hasal_pos_dev",
+    "host": "localhost",
+    "dialect": "mysql"
+  },
+  "test": {
+    "username": "root",
+    "password": "your_password_here",
+    "database": "hasal_pos_test",
+    "host": "localhost",
+    "dialect": "mysql"
+  },
+  "production": {
+    "username": "hasal_pos_user",
+    "password": "secure_production_password",
+    "database": "hasal_pos_prod",
+    "host": "localhost",
+    "dialect": "mysql"
+  }
+}
