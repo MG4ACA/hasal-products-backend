@@ -36,17 +36,20 @@ hasal-pos-backend/
 ### Installation
 
 1. Install dependencies:
+
 ```bash
 npm install
 ```
 
 2. Configure environment variables:
+
 ```bash
 # Copy .env.development and update with your values
 cp .env.development .env
 ```
 
 3. Update `.env` file with your database credentials:
+
 ```
 DB_HOST=localhost
 DB_USER=root
@@ -55,6 +58,7 @@ DB_NAME=hasal_pos_dev
 ```
 
 4. Create database:
+
 ```bash
 # Login to MySQL and create database
 mysql -u root -p
@@ -64,11 +68,13 @@ CREATE DATABASE hasal_pos_dev;
 ### Running the Server
 
 Development mode with auto-reload:
+
 ```bash
 npm run dev
 ```
 
 Production mode:
+
 ```bash
 npm start
 ```
@@ -78,9 +84,11 @@ Server will start on `http://localhost:5000`
 ## API Endpoints
 
 ### Health Check
+
 - `GET /health` - Server health status
 
 ### API Base
+
 - `GET /api` - API information
 
 ## Development
@@ -91,11 +99,13 @@ Server will start on `http://localhost:5000`
 - Prettier for formatting
 
 Run linting:
+
 ```bash
 npx eslint .
 ```
 
 Format code:
+
 ```bash
 npx prettier --write .
 ```
@@ -105,16 +115,19 @@ npx prettier --write .
 ### Sequelize CLI Commands
 
 Run migrations:
+
 ```bash
 npx sequelize-cli db:migrate
 ```
 
 Undo migrations:
+
 ```bash
 npx sequelize-cli db:migrate:undo
 ```
 
 Run seeders:
+
 ```bash
 npx sequelize-cli db:seed:all
 ```
@@ -124,6 +137,7 @@ npx sequelize-cli db:seed:all
 All API responses follow this format:
 
 **Success:**
+
 ```json
 {
   "success": true,
@@ -133,6 +147,7 @@ All API responses follow this format:
 ```
 
 **Error:**
+
 ```json
 {
   "success": false,
