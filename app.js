@@ -67,6 +67,14 @@ app.get('/api', (req, res) => {
 const authRoutes = require('./routes/authRoutes');
 app.use('/api/auth', authRoutes);
 
+// Supplier Routes
+const supplierRoutes = require('./routes/supplierRoutes');
+app.use('/api/suppliers', supplierRoutes);
+
+// Raw Material Routes
+const rawMaterialRoutes = require('./routes/rawMaterialRoutes');
+app.use('/api/raw-materials', rawMaterialRoutes);
+
 // 404 handler (must be after all routes)
 app.use(notFound);
 
