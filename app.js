@@ -63,9 +63,9 @@ app.get('/api', (req, res) => {
   });
 });
 
-// TODO: Add route imports here
-// const authRoutes = require('./routes/authRoutes');
-// app.use('/api/auth', authRoutes);
+// Authentication Routes
+const authRoutes = require('./routes/authRoutes');
+app.use('/api/auth', authRoutes);
 
 // 404 handler (must be after all routes)
 app.use(notFound);
