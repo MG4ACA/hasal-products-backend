@@ -1,8 +1,28 @@
 const express = require('express');
 const cors = require('cors');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
+const db = require('./models');
 
 const app = express();
+
+// Initialize database
+const initializeDatabase = async () => {
+  try {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Syncing database...');
+      await db.sequelize.sync();
+      console.log('Database synchronized successfully');
+    } else {
+      await db.sequelize.authenticate();
+      console.log('Database connection authenticated');
+    }
+  } catch (error) {
+    console.error('Database initialization error:', error);
+    throw error;
+  }
+};
+
+app.initializeDatabase = initializeDatabase;
 
 // CORS Configuration
 const corsOptions = {
