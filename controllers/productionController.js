@@ -61,19 +61,14 @@ exports.getAllProductionRuns = async (req, res) => {
       offset: parseInt(offset),
       include: [
         {
-          model: Product,
-          as: 'product',
-          attributes: ['id', 'product_code', 'name'],
-        },
-        {
-          model: ProductSku,
-          as: 'productSku',
-          attributes: ['id', 'sku_code', 'variant'],
-        },
-        {
           model: Recipe,
           as: 'recipe',
           attributes: ['id', 'name', 'version'],
+        },
+        {
+          model: db.User,
+          as: 'producedBy',
+          attributes: ['id', 'username'],
         },
       ],
       order: [['production_date', 'DESC']],
@@ -104,39 +99,50 @@ exports.getProductionRunById = async (req, res) => {
     const productionRun = await ProductionRun.findByPk(id, {
       include: [
         {
-          model: Product,
-          as: 'product',
-          attributes: ['id', 'product_code', 'name'],
-        },
-        {
-          model: ProductSku,
-          as: 'productSku',
-          attributes: ['id', 'sku_code', 'variant', 'price'],
-        },
-        {
           model: Recipe,
           as: 'recipe',
           attributes: ['id', 'name', 'version', 'batch_size', 'unit'],
+        },
+        {
+          model: db.User,
+          as: 'producedBy',
+          attributes: ['id', 'username'],
         },
         {
           model: ProductionMaterial,
           as: 'materials',
           include: [
             {
-              model: RawMaterial,
-              as: 'rawMaterial',
-              attributes: ['id', 'code', 'name', 'unit'],
-            },
-            {
               model: RawMaterialBatch,
               as: 'batch',
               attributes: ['id', 'batch_number', 'expiry_date'],
+              include: [
+                {
+                  model: RawMaterial,
+                  as: 'material',
+                  attributes: ['id', 'code', 'name', 'unit'],
+                },
+              ],
             },
           ],
         },
         {
           model: ProductionOutput,
           as: 'outputs',
+          include: [
+            {
+              model: ProductSku,
+              as: 'sku',
+              attributes: ['id', 'size', 'unit', 'price'],
+              include: [
+                {
+                  model: Product,
+                  as: 'product',
+                  attributes: ['id', 'code', 'name'],
+                },
+              ],
+            },
+          ],
         },
       ],
     });
@@ -159,39 +165,21 @@ exports.getProductionRunById = async (req, res) => {
 exports.createProductionRun = async (req, res) => {
   try {
     const {
-      product_id,
-      product_sku_id,
       recipe_id,
       production_date,
-      quantity_to_produce,
+      batch_number,
+      produced_by,
       notes,
-      status = 'planned',
+      status = 'completed',
     } = req.body;
 
     // Validation
-    if (!product_id || !product_sku_id || !recipe_id) {
-      return errorResponse(res, 'Product, SKU, and Recipe are required', 400);
-    }
-
-    if (!quantity_to_produce || quantity_to_produce <= 0) {
-      return errorResponse(res, 'Valid quantity to produce is required', 400);
+    if (!recipe_id || !batch_number || !produced_by) {
+      return errorResponse(res, 'Recipe ID, batch number, and produced_by user are required', 400);
     }
 
     // Verify recipe exists
-    const recipe = await Recipe.findByPk(recipe_id, {
-      include: [
-        {
-          model: RecipeItem,
-          as: 'items',
-          include: [
-            {
-              model: RawMaterial,
-              as: 'rawMaterial',
-            },
-          ],
-        },
-      ],
-    });
+    const recipe = await Recipe.findByPk(recipe_id);
 
     if (!recipe) {
       return errorResponse(res, 'Recipe not found', 404);
@@ -199,12 +187,10 @@ exports.createProductionRun = async (req, res) => {
 
     // Create production run
     const productionRun = await ProductionRun.create({
-      product_id,
-      product_sku_id,
       recipe_id,
       production_date: production_date || new Date(),
-      quantity_to_produce,
-      quantity_produced: 0,
+      batch_number,
+      produced_by,
       notes,
       status,
     });
@@ -213,19 +199,14 @@ exports.createProductionRun = async (req, res) => {
     const createdRun = await ProductionRun.findByPk(productionRun.id, {
       include: [
         {
-          model: Product,
-          as: 'product',
-          attributes: ['id', 'product_code', 'name'],
-        },
-        {
-          model: ProductSku,
-          as: 'productSku',
-          attributes: ['id', 'sku_code', 'variant'],
-        },
-        {
           model: Recipe,
           as: 'recipe',
           attributes: ['id', 'name', 'version', 'batch_size'],
+        },
+        {
+          model: db.User,
+          as: 'producedBy',
+          attributes: ['id', 'username'],
         },
       ],
     });
@@ -360,15 +341,11 @@ exports.completeProductionRun = async (req, res) => {
               include: [
                 {
                   model: RawMaterial,
-                  as: 'rawMaterial',
+                  as: 'material',
                 },
               ],
             },
           ],
-        },
-        {
-          model: ProductSku,
-          as: 'productSku',
         },
       ],
     });
@@ -393,7 +370,7 @@ exports.completeProductionRun = async (req, res) => {
       // Get available batches (FIFO: oldest first, exclude expired and disposed returns)
       const batches = await RawMaterialBatch.findAll({
         where: {
-          raw_material_id: item.raw_material_id,
+          material_id: item.material_id,
           current_quantity: { [Op.gt]: 0 },
           type: 'receipt', // Only use receipt batches
           expiry_date: { [Op.or]: [null, { [Op.gt]: new Date() }] },
@@ -423,10 +400,8 @@ exports.completeProductionRun = async (req, res) => {
         // Record material usage
         materialsUsed.push({
           production_run_id: id,
-          raw_material_id: item.raw_material_id,
           batch_id: batch.id,
           quantity_used: quantityToDeduct,
-          unit: item.unit,
         });
 
         remainingQuantity -= quantityToDeduct;
@@ -437,7 +412,7 @@ exports.completeProductionRun = async (req, res) => {
         await transaction.rollback();
         return errorResponse(
           res,
-          `Insufficient stock for ${item.rawMaterial.name}. Required: ${requiredQuantity}, Available: ${
+          `Insufficient stock for ${item.material.name}. Required: ${requiredQuantity}, Available: ${
             requiredQuantity - remainingQuantity
           }`,
           400
@@ -463,11 +438,8 @@ exports.completeProductionRun = async (req, res) => {
     await ProductionOutput.create(
       {
         production_run_id: id,
-        product_sku_id: productionRun.product_sku_id,
-        quantity: quantity_produced,
-        unit: productionRun.recipe.unit,
-        waste_quantity,
-        waste_reason,
+        sku_id: outputs[0]?.sku_id || null,
+        quantity_produced,
       },
       { transaction }
     );
@@ -475,9 +447,7 @@ exports.completeProductionRun = async (req, res) => {
     // Update production run status
     await productionRun.update(
       {
-        quantity_produced,
         status: 'completed',
-        completed_at: new Date(),
       },
       { transaction }
     );
@@ -488,33 +458,34 @@ exports.completeProductionRun = async (req, res) => {
     const completedRun = await ProductionRun.findByPk(id, {
       include: [
         {
-          model: Product,
-          as: 'product',
-          attributes: ['id', 'product_code', 'name'],
-        },
-        {
-          model: ProductSku,
-          as: 'productSku',
-          attributes: ['id', 'sku_code', 'variant', 'current_stock'],
-        },
-        {
           model: Recipe,
           as: 'recipe',
           attributes: ['id', 'name', 'version'],
+        },
+        {
+          model: db.User,
+          as: 'producedBy',
+          attributes: ['id', 'username'],
         },
         {
           model: ProductionMaterial,
           as: 'materials',
           include: [
             {
-              model: RawMaterial,
-              as: 'rawMaterial',
-              attributes: ['id', 'code', 'name', 'unit'],
-            },
-            {
               model: RawMaterialBatch,
               as: 'batch',
-              attributes: ['id', 'batch_number', 'current_quantity'],
+              attributes: ['id', 'batch_number', 'expiry_date'],
+            },
+          ],
+        },
+        {
+          model: ProductionOutput,
+          as: 'outputs',
+          include: [
+            {
+              model: ProductSku,
+              as: 'sku',
+              attributes: ['id', 'size', 'unit', 'price'],
             },
           ],
         },

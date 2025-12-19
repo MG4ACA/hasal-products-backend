@@ -85,7 +85,7 @@ exports.getAllInvoices = async (req, res) => {
         },
         {
           model: Employee,
-          as: 'sales_ref',
+          as: 'salesRef',
           attributes: ['id', 'code', 'name', 'type'],
         },
         {
@@ -95,7 +95,7 @@ exports.getAllInvoices = async (req, res) => {
         },
         {
           model: User,
-          as: 'creator',
+          as: 'createdBy',
           attributes: ['id', 'username', 'role'],
         },
       ],
@@ -140,7 +140,7 @@ exports.getInvoiceById = async (req, res) => {
         },
         {
           model: Employee,
-          as: 'sales_ref',
+          as: 'salesRef',
           attributes: ['id', 'code', 'name', 'type'],
         },
         {
@@ -347,7 +347,7 @@ exports.createInvoice = async (req, res) => {
     const createdInvoice = await SalesInvoice.findByPk(invoice.id, {
       include: [
         { model: Outlet, as: 'outlet' },
-        { model: Employee, as: 'sales_ref' },
+        { model: Employee, as: 'salesRef' },
         { model: Route, as: 'route' },
         { model: InvoiceItem, as: 'items', include: [{ model: ProductSku, as: 'sku' }] },
       ],
@@ -385,7 +385,7 @@ exports.updateInvoice = async (req, res) => {
     const updatedInvoice = await SalesInvoice.findByPk(id, {
       include: [
         { model: Outlet, as: 'outlet' },
-        { model: Employee, as: 'sales_ref' },
+        { model: Employee, as: 'salesRef' },
         { model: Route, as: 'route' },
         { model: InvoiceItem, as: 'items' },
       ],
