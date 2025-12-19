@@ -91,6 +91,22 @@ app.use('/api/recipes', recipeRoutes);
 const productionRoutes = require('./routes/productionRoutes');
 app.use('/api/production-runs', productionRoutes);
 
+// Route Routes
+const routeRoutes = require('./routes/routeRoutes');
+app.use('/api/routes', routeRoutes);
+
+// Outlet Routes
+const outletRoutes = require('./routes/outletRoutes');
+app.use('/api/outlets', outletRoutes);
+
+// Employee Routes
+const employeeRoutes = require('./routes/employeeRoutes');
+app.use('/api/employees', employeeRoutes);
+
+// Vehicle Routes
+const vehicleRoutes = require('./routes/vehicleRoutes');
+app.use('/api/vehicles', vehicleRoutes);
+
 // 404 handler (must be after all routes)
 app.use(notFound);
 
