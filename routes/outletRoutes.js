@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const outletController = require('../controllers/outletController');
+const paymentController = require('../controllers/paymentController');
 const authMiddleware = require('../middleware/authMiddleware');
 const roleCheck = require('../middleware/roleCheck');
 
@@ -21,6 +22,13 @@ router.get('/:id/invoices', outletController.getOutletInvoices);
 
 // Get outlet payments
 router.get('/:id/payments', outletController.getOutletPayments);
+
+// Get outstanding invoices for outlet
+router.get(
+  '/:outlet_id/outstanding-invoices',
+  roleCheck(['admin', 'manager', 'accountant']),
+  paymentController.getOutstandingInvoices
+);
 
 // Create new outlet (admin only)
 router.post('/', roleCheck(['admin']), outletController.createOutlet);

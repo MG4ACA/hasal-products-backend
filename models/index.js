@@ -143,6 +143,14 @@ db.InvoiceItem.belongsTo(db.ProductSku, { foreignKey: 'sku_id', as: 'sku' });
 // Payment associations
 db.Payment.belongsTo(db.Outlet, { foreignKey: 'outlet_id', as: 'outlet' });
 db.Payment.belongsTo(db.User, { foreignKey: 'created_by', as: 'createdBy' });
+db.Payment.hasMany(db.PaymentAllocation, { foreignKey: 'payment_id', as: 'allocations' });
+
+// PaymentAllocation associations
+db.PaymentAllocation.belongsTo(db.Payment, { foreignKey: 'payment_id', as: 'payment' });
+db.PaymentAllocation.belongsTo(db.SalesInvoice, { foreignKey: 'invoice_id', as: 'invoice' });
+
+// SalesInvoice payment allocations
+db.SalesInvoice.hasMany(db.PaymentAllocation, { foreignKey: 'invoice_id', as: 'allocations' });
 
 // SupplierPayment associations
 db.SupplierPayment.belongsTo(db.Supplier, { foreignKey: 'supplier_id', as: 'supplier' });

@@ -111,6 +111,10 @@ app.use('/api/vehicles', vehicleRoutes);
 const salesRoutes = require('./routes/salesRoutes');
 app.use('/api/sales-invoices', salesRoutes);
 
+// Payment Routes
+const paymentRoutes = require('./routes/paymentRoutes');
+app.use('/api/payments', paymentRoutes);
+
 // 404 handler (must be after all routes)
 app.use(notFound);
 

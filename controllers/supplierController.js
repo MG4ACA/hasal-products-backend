@@ -224,3 +224,266 @@ exports.getSupplierBalance = async (req, res) => {
     return errorResponse(res, 'Failed to fetch supplier balance', 500);
   }
 };
+
+// ===== SUPPLIER PAYMENT METHODS =====
+
+// GET /api/suppliers/:id/payments - Get all payments for a supplier
+exports.getSupplierPayments = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { page = 1, limit = 50, start_date, end_date } = req.query;
+
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    // Verify supplier exists
+    const supplier = await Supplier.findByPk(id);
+    if (!supplier) {
+      return errorResponse(res, 'Supplier not found', 404);
+    }
+
+    const where = { supplier_id: id };
+
+    if (start_date && end_date) {
+      where.payment_date = {
+        [Op.between]: [start_date, end_date],
+      };
+    } else if (start_date) {
+      where.payment_date = {
+        [Op.gte]: start_date,
+      };
+    } else if (end_date) {
+      where.payment_date = {
+        [Op.lte]: end_date,
+      };
+    }
+
+    const { SupplierPayment, User } = require('../models');
+
+    const { count, rows: payments } = await SupplierPayment.findAndCountAll({
+      where,
+      include: [
+        {
+          model: Supplier,
+          as: 'supplier',
+          attributes: ['id', 'code', 'name'],
+        },
+        {
+          model: User,
+          as: 'creator',
+          attributes: ['id', 'username', 'name'],
+        },
+      ],
+      order: [
+        ['payment_date', 'DESC'],
+        ['created_at', 'DESC'],
+      ],
+      limit: parseInt(limit),
+      offset,
+    });
+
+    return successResponse(res, {
+      payments,
+      pagination: {
+        total: count,
+        page: parseInt(page),
+        pages: Math.ceil(count / parseInt(limit)),
+        limit: parseInt(limit),
+      },
+    });
+  } catch (error) {
+    console.error('Get supplier payments error:', error);
+    return errorResponse(res, 'Error retrieving supplier payments', 500, error.message);
+  }
+};
+
+// GET /api/suppliers/payments - Get all supplier payments with filters
+exports.getAllSupplierPayments = async (req, res) => {
+  try {
+    const {
+      supplier_id,
+      payment_method,
+      start_date,
+      end_date,
+      check_status,
+      page = 1,
+      limit = 50,
+    } = req.query;
+
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    const where = {};
+
+    if (supplier_id) {
+      where.supplier_id = supplier_id;
+    }
+
+    if (payment_method) {
+      where.payment_method = payment_method;
+    }
+
+    if (start_date && end_date) {
+      where.payment_date = {
+        [Op.between]: [start_date, end_date],
+      };
+    } else if (start_date) {
+      where.payment_date = {
+        [Op.gte]: start_date,
+      };
+    } else if (end_date) {
+      where.payment_date = {
+        [Op.lte]: end_date,
+      };
+    }
+
+    // Filter by check status
+    if (check_status) {
+      where.payment_method = 'check';
+
+      if (check_status === 'pending') {
+        where.clearance_date = null;
+      } else if (check_status === 'cleared') {
+        where.clearance_date = {
+          [Op.ne]: null,
+        };
+      } else if (check_status === 'overdue') {
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+        where.clearance_date = null;
+        where.check_date = {
+          [Op.lt]: thirtyDaysAgo.toISOString().split('T')[0],
+        };
+      }
+    }
+
+    const { SupplierPayment, User } = require('../models');
+
+    const { count, rows: payments } = await SupplierPayment.findAndCountAll({
+      where,
+      include: [
+        {
+          model: Supplier,
+          as: 'supplier',
+          attributes: ['id', 'code', 'name', 'balance'],
+        },
+        {
+          model: User,
+          as: 'creator',
+          attributes: ['id', 'username', 'name'],
+        },
+      ],
+      order: [
+        ['payment_date', 'DESC'],
+        ['created_at', 'DESC'],
+      ],
+      limit: parseInt(limit),
+      offset,
+    });
+
+    return successResponse(res, {
+      payments,
+      pagination: {
+        total: count,
+        page: parseInt(page),
+        pages: Math.ceil(count / parseInt(limit)),
+        limit: parseInt(limit),
+      },
+    });
+  } catch (error) {
+    console.error('Get all supplier payments error:', error);
+    return errorResponse(res, 'Error retrieving supplier payments', 500, error.message);
+  }
+};
+
+// POST /api/suppliers/:id/payments - Create supplier payment
+exports.createSupplierPayment = async (req, res) => {
+  const { sequelize } = require('../models');
+  const transaction = await sequelize.transaction();
+
+  try {
+    const { id } = req.params;
+    const { payment_date, amount, payment_method, check_number, check_date, reference, notes } =
+      req.body;
+
+    // Validation
+    if (!payment_date || !amount || !payment_method) {
+      await transaction.rollback();
+      return errorResponse(
+        res,
+        'Missing required fields: payment_date, amount, payment_method',
+        400
+      );
+    }
+
+    if (amount <= 0) {
+      await transaction.rollback();
+      return errorResponse(res, 'Payment amount must be greater than 0', 400);
+    }
+
+    if (payment_method === 'check' && (!check_number || !check_date)) {
+      await transaction.rollback();
+      return errorResponse(res, 'Check payments require check_number and check_date', 400);
+    }
+
+    // Verify supplier exists
+    const supplier = await Supplier.findByPk(id, { transaction });
+    if (!supplier) {
+      await transaction.rollback();
+      return errorResponse(res, 'Supplier not found', 404);
+    }
+
+    // Check if payment amount exceeds balance
+    if (parseFloat(amount) > parseFloat(supplier.balance)) {
+      await transaction.rollback();
+      return errorResponse(res, 'Payment amount exceeds supplier balance', 400);
+    }
+
+    const { SupplierPayment } = require('../models');
+
+    // Create supplier payment
+    const payment = await SupplierPayment.create(
+      {
+        supplier_id: id,
+        payment_date,
+        amount: parseFloat(amount),
+        payment_method,
+        check_number: payment_method === 'check' ? check_number : null,
+        check_date: payment_method === 'check' ? check_date : null,
+        clearance_date: null,
+        reference,
+        notes,
+        created_by: req.user.id,
+      },
+      { transaction }
+    );
+
+    // Reduce supplier balance
+    const newBalance = parseFloat(supplier.balance) - parseFloat(amount);
+    await supplier.update({ balance: newBalance }, { transaction });
+
+    await transaction.commit();
+
+    // Fetch complete payment with associations
+    const { User } = require('../models');
+    const createdPayment = await SupplierPayment.findByPk(payment.id, {
+      include: [
+        {
+          model: Supplier,
+          as: 'supplier',
+          attributes: ['id', 'code', 'name', 'balance'],
+        },
+        {
+          model: User,
+          as: 'creator',
+          attributes: ['id', 'username', 'name'],
+        },
+      ],
+    });
+
+    return successResponse(res, createdPayment, 'Supplier payment created successfully', 201);
+  } catch (error) {
+    await transaction.rollback();
+    console.error('Create supplier payment error:', error);
+    return errorResponse(res, 'Error creating supplier payment', 500, error.message);
+  }
+};
