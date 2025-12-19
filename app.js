@@ -107,6 +107,10 @@ app.use('/api/employees', employeeRoutes);
 const vehicleRoutes = require('./routes/vehicleRoutes');
 app.use('/api/vehicles', vehicleRoutes);
 
+// Sales Invoice Routes
+const salesRoutes = require('./routes/salesRoutes');
+app.use('/api/sales-invoices', salesRoutes);
+
 // 404 handler (must be after all routes)
 app.use(notFound);
 
