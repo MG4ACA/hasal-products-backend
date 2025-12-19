@@ -75,6 +75,10 @@ app.use('/api/suppliers', supplierRoutes);
 const rawMaterialRoutes = require('./routes/rawMaterialRoutes');
 app.use('/api/raw-materials', rawMaterialRoutes);
 
+// Purchase Order Routes
+const purchaseOrderRoutes = require('./routes/purchaseOrderRoutes');
+app.use('/api/purchase-orders', purchaseOrderRoutes);
+
 // 404 handler (must be after all routes)
 app.use(notFound);
 

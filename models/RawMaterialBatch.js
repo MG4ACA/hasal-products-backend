@@ -28,6 +28,19 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         unique: true,
       },
+      batch_type: {
+        type: DataTypes.ENUM('receipt', 'return'),
+        allowNull: false,
+        defaultValue: 'receipt',
+      },
+      return_reason: {
+        type: DataTypes.STRING(255),
+        allowNull: true,
+      },
+      return_disposition: {
+        type: DataTypes.ENUM('stock', 'dispose'),
+        allowNull: true,
+      },
       quantity: {
         type: DataTypes.DECIMAL(10, 2),
         allowNull: false,
