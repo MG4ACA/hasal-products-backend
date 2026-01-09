@@ -42,6 +42,7 @@ exports.getAllSuppliers = async (req, res) => {
         { code: { [Op.like]: `%${search}%` } },
         { contact_person: { [Op.like]: `%${search}%` } },
         { email: { [Op.like]: `%${search}%` } },
+        { phone: { [Op.like]: `%${search}%` } },
       ];
     }
 
