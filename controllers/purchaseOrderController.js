@@ -1,7 +1,13 @@
-const { PurchaseOrder, PoItem, Supplier, RawMaterial, RawMaterialBatch } = require('../models');
+const {
+  PurchaseOrder,
+  PoItem,
+  Supplier,
+  RawMaterial,
+  RawMaterialBatch,
+  sequelize,
+} = require('../models');
 const { Op } = require('sequelize');
 const { successResponse, errorResponse } = require('../utils/response');
-const sequelize = require('../config/database');
 
 /**
  * Get all purchase orders with pagination, search, and filters
@@ -98,15 +104,7 @@ exports.getPurchaseOrderById = async (req, res) => {
         {
           model: Supplier,
           as: 'supplier',
-          attributes: [
-            'id',
-            'supplier_code',
-            'name',
-            'contact_person',
-            'phone',
-            'email',
-            'address',
-          ],
+          attributes: ['id', 'code', 'name', 'contact_person', 'phone', 'email', 'address'],
         },
         {
           model: PoItem,
@@ -115,7 +113,7 @@ exports.getPurchaseOrderById = async (req, res) => {
             {
               model: RawMaterial,
               as: 'material',
-              attributes: ['id', 'material_code', 'name', 'unit', 'current_stock'],
+              attributes: ['id', 'code', 'name', 'unit', 'current_stock'],
             },
           ],
         },
@@ -165,6 +163,7 @@ const generatePoNumber = async () => {
  */
 exports.createPurchaseOrder = async (req, res) => {
   const transaction = await sequelize.transaction();
+  let purchaseOrder = null;
 
   try {
     const { supplier_id, order_date, expected_delivery_date, notes, items } = req.body;
@@ -202,7 +201,7 @@ exports.createPurchaseOrder = async (req, res) => {
     });
 
     // Create purchase order
-    const purchaseOrder = await PurchaseOrder.create(
+    purchaseOrder = await PurchaseOrder.create(
       {
         po_number,
         supplier_id,
@@ -211,27 +210,42 @@ exports.createPurchaseOrder = async (req, res) => {
         total_amount: total_amount.toFixed(2),
         status: 'pending',
         notes,
+        created_by: req.user.id,
       },
       { transaction }
     );
 
     // Create PO items
     const poItems = items.map(item => ({
-      purchase_order_id: purchaseOrder.id,
-      raw_material_id: item.raw_material_id,
+      po_id: purchaseOrder.id,
+      material_id: item.raw_material_id,
       quantity: item.quantity,
       unit_cost: item.unit_cost,
-      total_cost: (parseFloat(item.quantity) * parseFloat(item.unit_cost)).toFixed(2),
+      total_amount: (parseFloat(item.quantity) * parseFloat(item.unit_cost)).toFixed(2),
     }));
 
     await PoItem.bulkCreate(poItems, { transaction });
 
     await transaction.commit();
 
-    // Fetch created PO with relations
+    // Update supplier balance
+    await Supplier.increment('balance', {
+      by: parseFloat(total_amount),
+      where: { id: supplier_id },
+    });
+  } catch (error) {
+    if (transaction && !transaction.finished) {
+      await transaction.rollback();
+    }
+    console.error('Error creating purchase order:', error);
+    return errorResponse(res, 'Failed to create purchase order', 500);
+  }
+
+  // Fetch created PO with relations (after transaction is committed)
+  try {
     const createdPo = await PurchaseOrder.findByPk(purchaseOrder.id, {
       include: [
-        { model: Supplier, as: 'supplier', attributes: ['id', 'supplier_code', 'name'] },
+        { model: Supplier, as: 'supplier', attributes: ['id', 'code', 'name'] },
         {
           model: PoItem,
           as: 'items',
@@ -239,7 +253,7 @@ exports.createPurchaseOrder = async (req, res) => {
             {
               model: RawMaterial,
               as: 'material',
-              attributes: ['id', 'material_code', 'name', 'unit'],
+              attributes: ['id', 'code', 'name', 'unit'],
             },
           ],
         },
@@ -248,9 +262,8 @@ exports.createPurchaseOrder = async (req, res) => {
 
     return successResponse(res, createdPo, 'Purchase order created successfully', 201);
   } catch (error) {
-    await transaction.rollback();
-    console.error('Error creating purchase order:', error);
-    return errorResponse(res, 'Failed to create purchase order', 500);
+    console.error('Error fetching created purchase order:', error);
+    return errorResponse(res, 'Purchase order created but failed to retrieve details', 500);
   }
 };
 
@@ -302,7 +315,7 @@ exports.updatePurchaseOrder = async (req, res) => {
       }
 
       // Delete existing items
-      await PoItem.destroy({ where: { purchase_order_id: id }, transaction });
+      await PoItem.destroy({ where: { po_id: id }, transaction });
 
       // Calculate new total amount
       let total_amount = 0;
@@ -313,11 +326,11 @@ exports.updatePurchaseOrder = async (req, res) => {
 
       // Create new items
       const poItems = items.map(item => ({
-        purchase_order_id: id,
-        raw_material_id: item.raw_material_id,
+        po_id: id,
+        material_id: item.raw_material_id,
         quantity: item.quantity,
         unit_cost: item.unit_cost,
-        total_cost: (parseFloat(item.quantity) * parseFloat(item.unit_cost)).toFixed(2),
+        total_amount: (parseFloat(item.quantity) * parseFloat(item.unit_cost)).toFixed(2),
       }));
 
       await PoItem.bulkCreate(poItems, { transaction });
@@ -339,7 +352,7 @@ exports.updatePurchaseOrder = async (req, res) => {
     // Fetch updated PO with relations
     const updatedPo = await PurchaseOrder.findByPk(id, {
       include: [
-        { model: Supplier, as: 'supplier', attributes: ['id', 'supplier_code', 'name'] },
+        { model: Supplier, as: 'supplier', attributes: ['id', 'code', 'name'] },
         {
           model: PoItem,
           as: 'items',
@@ -347,7 +360,7 @@ exports.updatePurchaseOrder = async (req, res) => {
             {
               model: RawMaterial,
               as: 'material',
-              attributes: ['id', 'material_code', 'name', 'unit'],
+              attributes: ['id', 'code', 'name', 'unit'],
             },
           ],
         },
@@ -389,7 +402,7 @@ exports.deletePurchaseOrder = async (req, res) => {
     }
 
     // Delete PO items first
-    await PoItem.destroy({ where: { purchase_order_id: id }, transaction });
+    await PoItem.destroy({ where: { po_id: id }, transaction });
 
     // Delete purchase order
     await purchaseOrder.destroy({ transaction });
@@ -468,7 +481,7 @@ exports.receivePurchaseOrder = async (req, res) => {
       const receivedQty = parseFloat(receivedItem.quantity_received);
 
       // Generate batch number
-      const batchNumber = await generateBatchNumber(rawMaterial.material_code);
+      const batchNumber = await generateBatchNumber(rawMaterial.code);
 
       // Create batch
       await RawMaterialBatch.create(
@@ -521,7 +534,7 @@ exports.receivePurchaseOrder = async (req, res) => {
         }
 
         // Generate batch number for return
-        const returnBatchNumber = await generateBatchNumber(rawMaterial.material_code);
+        const returnBatchNumber = await generateBatchNumber(rawMaterial.code);
 
         // Create negative batch for return
         await RawMaterialBatch.create(
@@ -619,7 +632,7 @@ exports.updatePurchaseOrderStatus = async (req, res) => {
     await purchaseOrder.update({ status });
 
     const updatedPo = await PurchaseOrder.findByPk(id, {
-      include: [{ model: Supplier, as: 'supplier', attributes: ['id', 'supplier_code', 'name'] }],
+      include: [{ model: Supplier, as: 'supplier', attributes: ['id', 'code', 'name'] }],
     });
 
     return successResponse(res, updatedPo, 'Purchase order status updated successfully');

@@ -85,7 +85,7 @@ exports.getSupplierById = async (req, res) => {
       include: [
         {
           model: PurchaseOrder,
-          as: 'purchase_orders',
+          as: 'purchaseOrders',
           limit: 5,
           order: [['created_at', 'DESC']],
         },
