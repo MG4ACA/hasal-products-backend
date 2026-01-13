@@ -486,7 +486,7 @@ exports.receivePurchaseOrder = async (req, res) => {
       // Create batch
       await RawMaterialBatch.create(
         {
-          raw_material_id: receivedItem.raw_material_id,
+          material_id: receivedItem.raw_material_id,
           supplier_id: purchaseOrder.supplier_id,
           batch_number: batchNumber,
           batch_type: 'receipt',
@@ -539,7 +539,7 @@ exports.receivePurchaseOrder = async (req, res) => {
         // Create negative batch for return
         await RawMaterialBatch.create(
           {
-            raw_material_id: returnItem.raw_material_id,
+            material_id: returnItem.raw_material_id,
             supplier_id: purchaseOrder.supplier_id,
             batch_number: returnBatchNumber,
             batch_type: 'return',

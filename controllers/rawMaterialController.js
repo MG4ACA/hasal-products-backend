@@ -171,7 +171,7 @@ exports.deleteRawMaterial = async (req, res) => {
 
     // Check if raw material has any batches
     const batchCount = await RawMaterialBatch.count({
-      where: { raw_material_id: id },
+      where: { material_id: id },
     });
 
     if (batchCount > 0) {
@@ -206,7 +206,7 @@ exports.getRawMaterialBatches = async (req, res) => {
     }
 
     const { count, rows } = await RawMaterialBatch.findAndCountAll({
-      where: { raw_material_id: id },
+      where: { material_id: id },
       limit: parseInt(limit),
       offset: parseInt(offset),
       order: [['created_at', 'DESC']],

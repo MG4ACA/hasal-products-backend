@@ -56,11 +56,22 @@ module.exports = (sequelize, DataTypes) => {
       expiry_date: {
         type: DataTypes.DATEONLY,
       },
+      created_at: {
+        type: DataTypes.DATE,
+        allowNull: false,
+        defaultValue: DataTypes.NOW,
+      },
+      updated_at: {
+        type: DataTypes.DATE,
+        allowNull: false,
+        defaultValue: DataTypes.NOW,
+      },
     },
     {
       tableName: 'raw_material_batches',
-      timestamps: false,
+      timestamps: true,
       createdAt: 'created_at',
+      updatedAt: 'updated_at',
       indexes: [
         { fields: ['material_id'] },
         { fields: ['batch_number'] },
