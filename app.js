@@ -10,7 +10,9 @@ const initializeDatabase = async () => {
   try {
     if (process.env.NODE_ENV === 'development') {
       console.log('Syncing database...');
-      await db.sequelize.sync();
+      // Use alter: true to automatically add missing columns to existing tables
+      // This safely adds Phase 1 schema changes without data loss
+      await db.sequelize.sync({ alter: true });
       console.log('Database synchronized successfully');
     } else {
       await db.sequelize.authenticate();
@@ -78,6 +80,14 @@ app.use('/api/raw-materials', rawMaterialRoutes);
 // Purchase Order Routes
 const purchaseOrderRoutes = require('./routes/purchaseOrderRoutes');
 app.use('/api/purchase-orders', purchaseOrderRoutes);
+
+// Batch Routes (QC Inspection)
+const batchRoutes = require('./routes/batchRoutes');
+app.use('/api/raw-material-batches', batchRoutes);
+
+// Batch Traceability Routes (Phase 2)
+const traceabilityRoutes = require('./routes/traceabilityRoutes');
+app.use('/api/batches', traceabilityRoutes);
 
 // Product Routes
 const productRoutes = require('./routes/productRoutes');

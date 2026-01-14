@@ -47,6 +47,11 @@ module.exports = (sequelize, DataTypes) => {
       return_reason: {
         type: DataTypes.STRING(200),
       },
+      accepted_quantity: {
+        type: DataTypes.DECIMAL(10, 2),
+        defaultValue: 0,
+        allowNull: false,
+      },
     },
     {
       tableName: 'po_items',

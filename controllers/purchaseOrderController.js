@@ -253,7 +253,7 @@ exports.createPurchaseOrder = async (req, res) => {
   try {
     const createdPo = await PurchaseOrder.findByPk(purchaseOrder.id, {
       include: [
-        { model: Supplier, as: 'supplier', attributes: ['id', 'code', 'name'] },
+        { model: Supplier, as: 'supplier', attributes: ['id', 'code', 'name', 'contact_person', 'phone', 'email', 'address', 'balance'] },
         {
           model: PoItem,
           as: 'items',
@@ -436,9 +436,19 @@ exports.receivePurchaseOrder = async (req, res) => {
     const { id } = req.params;
     const { received_date, received_items, return_items } = req.body;
 
-    if (!received_date || !received_items || received_items.length === 0) {
+    // Phase 2: Allow return-only transactions (no new received items)
+    if (!received_date) {
       await transaction.rollback();
-      return errorResponse(res, 'Received date and items are required', 400);
+      return errorResponse(res, 'Received date is required', 400);
+    }
+
+    // Phase 2: Need at least one return item or at least one received item with > 0 quantity
+    const hasReturnItems = return_items && return_items.length > 0;
+    const hasReceivedItems = received_items && received_items.some(item => parseFloat(item.quantity_received) > 0);
+
+    if (!hasReturnItems && !hasReceivedItems) {
+      await transaction.rollback();
+      return errorResponse(res, 'Either received items (with quantity > 0) or return items are required', 400);
     }
 
     const purchaseOrder = await PurchaseOrder.findByPk(id, {
@@ -460,9 +470,16 @@ exports.receivePurchaseOrder = async (req, res) => {
       return errorResponse(res, 'Purchase order not found', 404);
     }
 
-    if (purchaseOrder.status === 'received') {
+    // Phase 2: Allow returns on received POs (but no new received items)
+    // Phase 1.3: Allow multiple receipts for pending or partial POs (not for fully received)
+    if (purchaseOrder.status === 'received' && !hasReturnItems) {
       await transaction.rollback();
-      return errorResponse(res, 'Purchase order already received', 400);
+      return errorResponse(res, 'Cannot receive additional items for an already fully received purchase order. Use return transaction if needed.', 400);
+    }
+
+    if (purchaseOrder.status === 'cancelled') {
+      await transaction.rollback();
+      return errorResponse(res, 'Cannot receive a cancelled purchase order', 400);
     }
 
     // Import batch number generator
@@ -470,9 +487,10 @@ exports.receivePurchaseOrder = async (req, res) => {
 
     let totalReceivedAmount = 0;
     let totalReturnAmount = 0;
+    const createdBatches = []; // Track created batches for response
 
-    // Process each received item
-    for (const receivedItem of received_items) {
+    // Process each received item (may be empty for return-only transactions)
+    for (const receivedItem of received_items || []) {
       const poItem = purchaseOrder.items.find(
         item => item.material_id === receivedItem.raw_material_id
       );
@@ -488,12 +506,24 @@ exports.receivePurchaseOrder = async (req, res) => {
 
       const rawMaterial = poItem.material;
       const receivedQty = parseFloat(receivedItem.quantity_received);
+      const poQuantity = parseFloat(poItem.quantity);
+      const currentlyReceived = parseFloat(poItem.received_quantity || 0);
+
+      // Phase 1.3: Validate no over-receipt (cumulative check)
+      if (currentlyReceived + receivedQty > poQuantity) {
+        await transaction.rollback();
+        return errorResponse(
+          res,
+          `Cannot receive ${receivedQty}kg for material ${rawMaterial.code}. Already received ${currentlyReceived}kg of ${poQuantity}kg ordered.`,
+          400
+        );
+      }
 
       // Generate batch number
       const batchNumber = await generateBatchNumber(rawMaterial.code, transaction);
 
-      // Create batch
-      await RawMaterialBatch.create(
+      // Create batch with inspection_status = 'pending' (Phase 1 QC workflow)
+      const batch = await RawMaterialBatch.create(
         {
           material_id: receivedItem.raw_material_id,
           supplier_id: purchaseOrder.supplier_id,
@@ -503,12 +533,21 @@ exports.receivePurchaseOrder = async (req, res) => {
           unit_cost: poItem.unit_cost,
           purchase_date: received_date,
           expiry_date: receivedItem.expiry_date,
+          inspection_status: 'pending',
+          accepted_quantity: 0,
+          rejected_quantity: 0,
         },
         { transaction }
       );
+      createdBatches.push(batch);
 
-      // Update PO item received quantity
-      await poItem.update({ received_quantity: receivedQty }, { transaction });
+      // Update PO item received quantity (cumulative for multiple receipts)
+      // received_quantity is updated cumulatively, accepted_quantity is set to current receipt
+      const newReceivedQty = currentlyReceived + receivedQty;
+      await poItem.update(
+        { received_quantity: newReceivedQty, accepted_quantity: newReceivedQty },
+        { transaction }
+      );
 
       // Add to total received amount for balance update
       totalReceivedAmount += receivedQty * parseFloat(poItem.unit_cost);
@@ -543,11 +582,63 @@ exports.receivePurchaseOrder = async (req, res) => {
           );
         }
 
+        // Phase 2: Validate source_batch_id if provided
+        let sourceBatchId = null;
+        if (returnItem.source_batch_id) {
+          console.log('Validating source_batch_id:', returnItem.source_batch_id);
+          
+          try {
+            const sourceBatch = await RawMaterialBatch.findByPk(
+              returnItem.source_batch_id,
+              { transaction }
+            );
+
+            if (!sourceBatch) {
+              await transaction.rollback();
+              return errorResponse(
+                res,
+                `Source batch ${returnItem.source_batch_id} not found`,
+                404
+              );
+            }
+
+            // Validate source batch belongs to same material
+            if (sourceBatch.material_id !== returnItem.raw_material_id) {
+              await transaction.rollback();
+              return errorResponse(
+                res,
+                `Source batch belongs to different material (${sourceBatch.material_id} vs ${returnItem.raw_material_id})`,
+                400
+              );
+            }
+
+            // Validate source batch is a receipt batch (not another return)
+            if (sourceBatch.batch_type !== 'receipt') {
+              await transaction.rollback();
+              return errorResponse(
+                res,
+                'Can only return from receipt batches, not from other return batches',
+                400
+              );
+            }
+
+            sourceBatchId = returnItem.source_batch_id;
+          } catch (validationError) {
+            console.error('Source batch validation error:', validationError);
+            await transaction.rollback();
+            return errorResponse(
+              res,
+              `Batch validation error: ${validationError.message}`,
+              500
+            );
+          }
+        }
+
         // Generate batch number for return
         const returnBatchNumber = await generateBatchNumber(rawMaterial.code, transaction);
 
-        // Create negative batch for return (stock will be adjusted via batch sum query)
-        await RawMaterialBatch.create(
+        // Create negative batch for return with source_batch_id tracking (Phase 2)
+        const returnBatch = await RawMaterialBatch.create(
           {
             material_id: returnItem.raw_material_id,
             supplier_id: purchaseOrder.supplier_id,
@@ -559,9 +650,14 @@ exports.receivePurchaseOrder = async (req, res) => {
             unit_cost: poItem.unit_cost,
             purchase_date: received_date,
             expiry_date: returnItem.expiry_date || null,
+            inspection_status: 'approved',
+            accepted_quantity: 0,
+            rejected_quantity: returnQty,
+            source_batch_id: sourceBatchId,
           },
           { transaction }
         );
+        createdBatches.push(returnBatch);
 
         // Calculate return amount
         totalReturnAmount += returnQty * parseFloat(poItem.unit_cost);
@@ -577,10 +673,9 @@ exports.receivePurchaseOrder = async (req, res) => {
     // Determine new status: "received" if all items received, "partial" if some, "cancelled" stays as is
     let newStatus = 'partial';
     const allItemsReceived = purchaseOrder.items.every(item => {
-      const receivedItem = received_items.find(ri => ri.raw_material_id === item.material_id);
-      return (
-        receivedItem && parseFloat(receivedItem.quantity_received) >= parseFloat(item.quantity)
-      );
+      const totalReceived = parseFloat(item.received_quantity || 0);
+      const totalOrdered = parseFloat(item.quantity);
+      return totalReceived >= totalOrdered;
     });
 
     if (allItemsReceived) {
@@ -604,7 +699,7 @@ exports.receivePurchaseOrder = async (req, res) => {
       ],
     });
 
-    return successResponse(res, updatedPo, 'Purchase order received successfully');
+    return successResponse(res, { po: updatedPo, batches: createdBatches }, 'Purchase order received successfully');
   } catch (error) {
     await transaction.rollback();
     console.error('Error receiving purchase order:', error);
@@ -646,5 +741,85 @@ exports.updatePurchaseOrderStatus = async (req, res) => {
   } catch (error) {
     console.error('Error updating purchase order status:', error);
     return errorResponse(res, 'Failed to update purchase order status', 500);
+  }
+};
+/**
+ * Cancel a purchase order
+ * PUT /api/purchase-orders/:id/cancel
+ * 
+ * Only pending POs can be cancelled. Reverses supplier balance.
+ */
+exports.cancelPurchaseOrder = async (req, res) => {
+  const transaction = await sequelize.transaction();
+
+  try {
+    const { id } = req.params;
+    const { cancellation_reason } = req.body;
+
+    if (!cancellation_reason) {
+      await transaction.rollback();
+      return errorResponse(res, 'Cancellation reason is required', 400);
+    }
+
+    const purchaseOrder = await PurchaseOrder.findByPk(id, {
+      include: [
+        { model: Supplier, as: 'supplier' },
+        { model: PoItem, as: 'items' },
+      ],
+      transaction,
+    });
+
+    if (!purchaseOrder) {
+      await transaction.rollback();
+      return errorResponse(res, 'Purchase order not found', 404);
+    }
+
+    // Only allow cancellation of pending POs
+    if (purchaseOrder.status !== 'pending') {
+      await transaction.rollback();
+      return errorResponse(
+        res,
+        `Cannot cancel purchase order with status: ${purchaseOrder.status}. Only pending POs can be cancelled.`,
+        400
+      );
+    }
+
+    // Reverse supplier balance
+    const supplier = purchaseOrder.supplier;
+    if (supplier) {
+      const newBalance = parseFloat(supplier.balance || 0) - parseFloat(purchaseOrder.total_amount);
+      await supplier.update({ balance: newBalance.toFixed(2) }, { transaction });
+    }
+
+    // Update PO with cancellation details
+    await purchaseOrder.update(
+      {
+        status: 'cancelled',
+        cancellation_reason,
+        cancelled_at: new Date(),
+        cancelled_by: req.user.id,
+      },
+      { transaction }
+    );
+
+    await transaction.commit();
+
+    // Fetch updated PO
+    const cancelledPo = await PurchaseOrder.findByPk(id, {
+      include: [
+        { model: Supplier, as: 'supplier', attributes: ['id', 'code', 'name', 'balance'] },
+        {
+          model: PoItem,
+          as: 'items',
+          include: [{ model: RawMaterial, as: 'material' }],
+        },
+      ],
+    });
+
+    return successResponse(res, cancelledPo, 'Purchase order cancelled successfully');
+  } catch (error) {
+    await transaction.rollback();
+    console.error('Error cancelling purchase order:', error);
+    return errorResponse(res, error.message || 'Failed to cancel purchase order', 500);
   }
 };

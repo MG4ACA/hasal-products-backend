@@ -56,6 +56,37 @@ module.exports = (sequelize, DataTypes) => {
       expiry_date: {
         type: DataTypes.DATEONLY,
       },
+      inspection_status: {
+        type: DataTypes.ENUM('pending', 'approved', 'rejected'),
+        defaultValue: 'pending',
+        allowNull: false,
+      },
+      inspection_date: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
+      inspection_notes: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
+      accepted_quantity: {
+        type: DataTypes.DECIMAL(10, 2),
+        defaultValue: 0,
+        allowNull: false,
+      },
+      rejected_quantity: {
+        type: DataTypes.DECIMAL(10, 2),
+        defaultValue: 0,
+        allowNull: false,
+      },
+      source_batch_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+          model: 'raw_material_batches',
+          key: 'id',
+        },
+      },
       created_at: {
         type: DataTypes.DATE,
         allowNull: false,

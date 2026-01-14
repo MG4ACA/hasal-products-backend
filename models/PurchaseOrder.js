@@ -46,6 +46,22 @@ module.exports = (sequelize, DataTypes) => {
           key: 'id',
         },
       },
+      cancellation_reason: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
+      cancelled_at: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
+      cancelled_by: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+          model: 'users',
+          key: 'id',
+        },
+      },
     },
     {
       tableName: 'purchase_orders',

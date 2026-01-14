@@ -54,6 +54,14 @@ db.RawMaterial.hasMany(db.PoItem, { foreignKey: 'material_id', as: 'poItems' });
 // RawMaterialBatch associations
 db.RawMaterialBatch.belongsTo(db.RawMaterial, { foreignKey: 'material_id', as: 'material' });
 db.RawMaterialBatch.belongsTo(db.Supplier, { foreignKey: 'supplier_id', as: 'supplier' });
+db.RawMaterialBatch.belongsTo(db.RawMaterialBatch, {
+  foreignKey: 'source_batch_id',
+  as: 'sourceBatch',
+});
+db.RawMaterialBatch.hasMany(db.RawMaterialBatch, {
+  foreignKey: 'source_batch_id',
+  as: 'returnBatches',
+});
 db.RawMaterialBatch.hasMany(db.ProductionMaterial, {
   foreignKey: 'batch_id',
   as: 'productionMaterials',

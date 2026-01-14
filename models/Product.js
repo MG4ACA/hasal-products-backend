@@ -9,7 +9,6 @@ module.exports = (sequelize, DataTypes) => {
       },
       code: {
         type: DataTypes.STRING(20),
-        unique: true,
         allowNull: false,
       },
       name: {
@@ -21,7 +20,6 @@ module.exports = (sequelize, DataTypes) => {
       },
       barcode: {
         type: DataTypes.STRING(50),
-        unique: true,
       },
       description: {
         type: DataTypes.TEXT,
@@ -37,11 +35,8 @@ module.exports = (sequelize, DataTypes) => {
       updatedAt: 'updated_at',
       createdAt: 'created_at',
       indexes: [
-        { fields: ['code'] },
-        { fields: ['name'] },
-        { fields: ['barcode'] },
-        { fields: ['category'] },
-        { fields: ['status'] },
+        { fields: ['code'], unique: true },
+        { fields: ['barcode'], unique: true },
       ],
     }
   );

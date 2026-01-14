@@ -56,4 +56,11 @@ router.post('/:id/receive', roleCheck(['admin']), purchaseOrderController.receiv
  */
 router.put('/:id/status', roleCheck(['admin']), purchaseOrderController.updatePurchaseOrderStatus);
 
+/**
+ * @route   PUT /api/purchase-orders/:id/cancel
+ * @desc    Cancel purchase order (only pending POs)
+ * @access  Private (Admin only)
+ */
+router.put('/:id/cancel', roleCheck(['admin']), purchaseOrderController.cancelPurchaseOrder);
+
 module.exports = router;

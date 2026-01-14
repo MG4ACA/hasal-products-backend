@@ -51,8 +51,12 @@ const generateBatchNumber = async (materialCode, transaction = null) => {
     // Cache the sequence number for this material-date combination
     batchSequenceCache[cacheKey] = sequence;
 
-    // Format: RM-{MATERIAL_CODE}-{YYYYMMDD}-{XXX}
-    const batchNumber = `RM-${materialCode}-${dateStr}-${String(sequence).padStart(3, '0')}`;
+    // Add milliseconds timestamp for absolute uniqueness in case of multiple calls
+    const now = new Date();
+    const timeStr = String(now.getMilliseconds()).padStart(3, '0');
+
+    // Format: RM-{MATERIAL_CODE}-{YYYYMMDD}-{XXX}-{MSEC}
+    const batchNumber = `RM-${materialCode}-${dateStr}-${String(sequence).padStart(3, '0')}-${timeStr}`;
 
     return batchNumber;
   } catch (error) {
