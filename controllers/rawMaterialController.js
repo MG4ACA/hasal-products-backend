@@ -245,8 +245,8 @@ exports.getRawMaterialStock = async (req, res) => {
 
     // Calculate total stock from all batches
     const stockResult = await RawMaterialBatch.findOne({
-      where: { raw_material_id: id },
-      attributes: [[sequelize.fn('SUM', sequelize.col('current_quantity')), 'total_stock']],
+      where: { material_id: id },
+      attributes: [[sequelize.fn('SUM', sequelize.col('quantity')), 'total_stock']],
     });
 
     const totalStock = parseFloat(stockResult?.dataValues?.total_stock || 0);

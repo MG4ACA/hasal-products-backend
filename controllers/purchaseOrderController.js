@@ -113,7 +113,7 @@ exports.getPurchaseOrderById = async (req, res) => {
             {
               model: RawMaterial,
               as: 'material',
-              attributes: ['id', 'code', 'name', 'unit', 'current_stock'],
+              attributes: ['id', 'code', 'name', 'unit'],
             },
           ],
         },
@@ -166,7 +166,14 @@ exports.createPurchaseOrder = async (req, res) => {
   let purchaseOrder = null;
 
   try {
-    const { supplier_id, order_date, expected_delivery_date, notes, items } = req.body;
+    const { supplier_id, order_date, expected_date, notes, items } = req.body;
+
+    console.log('PO Creation Request:', {
+      supplier_id,
+      order_date,
+      expected_date,
+      items_count: items?.length,
+    });
 
     // Validate required fields
     if (!supplier_id || !order_date || !items || items.length === 0) {
@@ -206,7 +213,7 @@ exports.createPurchaseOrder = async (req, res) => {
         po_number,
         supplier_id,
         order_date,
-        expected_delivery_date,
+        expected_date,
         total_amount: total_amount.toFixed(2),
         status: 'pending',
         notes,
@@ -237,7 +244,8 @@ exports.createPurchaseOrder = async (req, res) => {
     if (transaction && !transaction.finished) {
       await transaction.rollback();
     }
-    console.error('Error creating purchase order:', error);
+    console.error('Error creating purchase order:', error.message);
+    console.error('Error details:', error);
     return errorResponse(res, 'Failed to create purchase order', 500);
   }
 
@@ -276,7 +284,7 @@ exports.updatePurchaseOrder = async (req, res) => {
 
   try {
     const { id } = req.params;
-    const { supplier_id, order_date, expected_delivery_date, notes, items } = req.body;
+    const { supplier_id, order_date, expected_date, notes, items } = req.body;
 
     const purchaseOrder = await PurchaseOrder.findByPk(id);
     if (!purchaseOrder) {
@@ -343,7 +351,7 @@ exports.updatePurchaseOrder = async (req, res) => {
     const updateData = {};
     if (supplier_id) updateData.supplier_id = supplier_id;
     if (order_date) updateData.order_date = order_date;
-    if (expected_delivery_date) updateData.expected_delivery_date = expected_delivery_date;
+    if (expected_date) updateData.expected_date = expected_date;
     if (notes !== undefined) updateData.notes = notes;
 
     await purchaseOrder.update(updateData, { transaction });
@@ -460,12 +468,13 @@ exports.receivePurchaseOrder = async (req, res) => {
     // Import batch number generator
     const { generateBatchNumber } = require('../utils/batchNumberGenerator');
 
+    let totalReceivedAmount = 0;
     let totalReturnAmount = 0;
 
     // Process each received item
     for (const receivedItem of received_items) {
-      const poItem = purchaseOrder.PoItems.find(
-        item => item.raw_material_id === receivedItem.raw_material_id
+      const poItem = purchaseOrder.items.find(
+        item => item.material_id === receivedItem.raw_material_id
       );
 
       if (!poItem) {
@@ -477,11 +486,11 @@ exports.receivePurchaseOrder = async (req, res) => {
         );
       }
 
-      const rawMaterial = poItem.RawMaterial;
+      const rawMaterial = poItem.material;
       const receivedQty = parseFloat(receivedItem.quantity_received);
 
       // Generate batch number
-      const batchNumber = await generateBatchNumber(rawMaterial.code);
+      const batchNumber = await generateBatchNumber(rawMaterial.code, transaction);
 
       // Create batch
       await RawMaterialBatch.create(
@@ -490,25 +499,26 @@ exports.receivePurchaseOrder = async (req, res) => {
           supplier_id: purchaseOrder.supplier_id,
           batch_number: batchNumber,
           batch_type: 'receipt',
-          received_date: received_date,
-          expiry_date: receivedItem.expiry_date,
-          initial_quantity: receivedQty,
-          current_quantity: receivedQty,
+          quantity: receivedQty,
           unit_cost: poItem.unit_cost,
+          purchase_date: received_date,
+          expiry_date: receivedItem.expiry_date,
         },
         { transaction }
       );
 
-      // Update raw material stock
-      const newStock = parseFloat(rawMaterial.current_stock || 0) + receivedQty;
-      await rawMaterial.update({ current_stock: newStock.toFixed(2) }, { transaction });
+      // Update PO item received quantity
+      await poItem.update({ received_quantity: receivedQty }, { transaction });
+
+      // Add to total received amount for balance update
+      totalReceivedAmount += receivedQty * parseFloat(poItem.unit_cost);
     }
 
     // Process return items if provided
     if (return_items && return_items.length > 0) {
       for (const returnItem of return_items) {
-        const poItem = purchaseOrder.PoItems.find(
-          item => item.raw_material_id === returnItem.raw_material_id
+        const poItem = purchaseOrder.items.find(
+          item => item.material_id === returnItem.raw_material_id
         );
 
         if (!poItem) {
@@ -520,7 +530,7 @@ exports.receivePurchaseOrder = async (req, res) => {
           );
         }
 
-        const rawMaterial = poItem.RawMaterial;
+        const rawMaterial = poItem.material;
         const returnQty = parseFloat(returnItem.quantity_returned);
 
         // Validate return reason and disposition
@@ -534,9 +544,9 @@ exports.receivePurchaseOrder = async (req, res) => {
         }
 
         // Generate batch number for return
-        const returnBatchNumber = await generateBatchNumber(rawMaterial.code);
+        const returnBatchNumber = await generateBatchNumber(rawMaterial.code, transaction);
 
-        // Create negative batch for return
+        // Create negative batch for return (stock will be adjusted via batch sum query)
         await RawMaterialBatch.create(
           {
             material_id: returnItem.raw_material_id,
@@ -545,43 +555,40 @@ exports.receivePurchaseOrder = async (req, res) => {
             batch_type: 'return',
             return_reason: returnItem.return_reason,
             return_disposition: returnItem.disposition,
-            received_date: received_date,
-            expiry_date: returnItem.expiry_date || null,
-            initial_quantity: -returnQty, // Negative quantity for returns
-            current_quantity: -returnQty,
+            quantity: -returnQty,
             unit_cost: poItem.unit_cost,
+            purchase_date: received_date,
+            expiry_date: returnItem.expiry_date || null,
           },
           { transaction }
         );
-
-        // Update stock only if disposition is 'stock' (not dispose)
-        if (returnItem.disposition === 'stock') {
-          const newStock = parseFloat(rawMaterial.current_stock || 0) - returnQty;
-          await rawMaterial.update(
-            { current_stock: Math.max(0, newStock).toFixed(2) },
-            { transaction }
-          );
-        }
 
         // Calculate return amount
         totalReturnAmount += returnQty * parseFloat(poItem.unit_cost);
       }
     }
 
-    // Update supplier balance (add to payable, minus returns)
-    const supplier = purchaseOrder.Supplier;
-    const netAmount = parseFloat(purchaseOrder.total_amount) - totalReturnAmount;
+    // Update supplier balance (only for received amount minus returns)
+    const supplier = purchaseOrder.supplier;
+    const netAmount = totalReceivedAmount - totalReturnAmount;
     const newBalance = parseFloat(supplier.balance || 0) + netAmount;
     await supplier.update({ balance: newBalance.toFixed(2) }, { transaction });
 
+    // Determine new status: "received" if all items received, "partial" if some, "cancelled" stays as is
+    let newStatus = 'partial';
+    const allItemsReceived = purchaseOrder.items.every(item => {
+      const receivedItem = received_items.find(ri => ri.raw_material_id === item.material_id);
+      return (
+        receivedItem && parseFloat(receivedItem.quantity_received) >= parseFloat(item.quantity)
+      );
+    });
+
+    if (allItemsReceived) {
+      newStatus = 'received';
+    }
+
     // Update PO status
-    await purchaseOrder.update(
-      {
-        status: 'received',
-        received_date: received_date,
-      },
-      { transaction }
-    );
+    await purchaseOrder.update({ status: newStatus }, { transaction });
 
     await transaction.commit();
 
