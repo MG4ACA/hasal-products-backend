@@ -5,7 +5,9 @@ const seedDatabase = require('./seeders');
 const seed = async () => {
   try {
     console.log('🌱 Starting database seeding...');
-    await db.sequelize.sync({ force: true });
+    // Use alter: true to safely sync schema without data loss
+    // Seeders.js has duplicate protection - won't re-seed if data exists
+    await db.sequelize.sync({ alter: true });
 
     await seedDatabase();
 

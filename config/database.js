@@ -1,5 +1,12 @@
 require('dotenv').config();
 
+// Conditional logging: only log errors in development
+const developmentLogger = msg => {
+  if (msg.includes('ERROR') || msg.includes('error') || msg.includes('failed')) {
+    console.error('🚨 [Database]', msg);
+  }
+};
+
 module.exports = {
   development: {
     username: process.env.DB_USER,
@@ -8,7 +15,7 @@ module.exports = {
     host: process.env.DB_HOST,
     port: process.env.DB_PORT,
     dialect: 'mysql',
-    logging: console.log,
+    logging: developmentLogger,
     pool: {
       max: 5,
       min: 0,
