@@ -18,7 +18,7 @@ const generateRawMaterialCode = async () => {
   return `RM-${String(newNumber).padStart(4, '0')}`;
 };
 
-// GET /api/raw-materials - Get all raw materials
+// GET /api/raw-materials - Get all raw materials with stock calculation
 exports.getAllRawMaterials = async (req, res) => {
   try {
     const {
@@ -58,8 +58,25 @@ exports.getAllRawMaterials = async (req, res) => {
       order: [[sortBy, sortOrder]],
     });
 
+    // Calculate current stock for each material
+    const materialsWithStock = await Promise.all(
+      rows.map(async material => {
+        const stockResult = await RawMaterialBatch.findOne({
+          where: { material_id: material.id },
+          attributes: [[sequelize.fn('SUM', sequelize.col('quantity')), 'total_stock']],
+        });
+
+        const totalStock = parseFloat(stockResult?.dataValues?.total_stock || 0);
+
+        return {
+          ...material.toJSON(),
+          current_stock: totalStock,
+        };
+      })
+    );
+
     return successResponse(res, {
-      raw_materials: rows,
+      raw_materials: materialsWithStock,
       pagination: {
         total: count,
         page: parseInt(page),
@@ -73,18 +90,76 @@ exports.getAllRawMaterials = async (req, res) => {
   }
 };
 
-// GET /api/raw-materials/:id - Get raw material by ID
+// GET /api/raw-materials/:id - Get raw material by ID (with batches and supplier info)
 exports.getRawMaterialById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const rawMaterial = await RawMaterial.findByPk(id);
+    const rawMaterial = await RawMaterial.findByPk(id, {
+      include: [
+        {
+          model: RawMaterialBatch,
+          as: 'batches',
+          attributes: [
+            'id',
+            'batch_number',
+            'batch_type',
+            'quantity',
+            'unit_cost',
+            'purchase_date',
+            'expiry_date',
+            'inspection_status',
+            'supplier_id',
+            'created_at',
+          ],
+          include: [
+            {
+              model: require('../models').Supplier,
+              as: 'supplier',
+              attributes: ['id', 'code', 'name'],
+            },
+          ],
+          order: [['created_at', 'DESC']],
+          limit: 10, // Show recent 10 batches
+        },
+      ],
+    });
 
     if (!rawMaterial) {
       return errorResponse(res, 'Raw material not found', 404);
     }
 
-    return successResponse(res, { raw_material: rawMaterial });
+    // Calculate current stock from all batches
+    const stockResult = await RawMaterialBatch.findOne({
+      where: { material_id: id },
+      attributes: [[sequelize.fn('SUM', sequelize.col('quantity')), 'total_stock']],
+    });
+
+    const totalStock = parseFloat(stockResult?.dataValues?.total_stock || 0);
+
+    // Calculate weighted average cost from all batches
+    let averageCost = 0;
+    if (totalStock > 0) {
+      const costResult = await sequelize.query(
+        `SELECT SUM(quantity * unit_cost) / SUM(quantity) as avg_cost
+         FROM raw_material_batches
+         WHERE material_id = ? AND batch_type = 'receipt'`,
+        {
+          replacements: [id],
+          type: sequelize.QueryTypes.SELECT,
+        }
+      );
+      averageCost = parseFloat(costResult[0]?.avg_cost || 0);
+    }
+
+    return successResponse(res, {
+      raw_material: {
+        ...rawMaterial.toJSON(),
+        current_stock: totalStock,
+        average_cost: averageCost,
+        RawMaterialBatches: rawMaterial.batches, // Rename for frontend compatibility
+      },
+    });
   } catch (error) {
     console.error('Get raw material by ID error:', error);
     return errorResponse(res, 'Failed to fetch raw material', 500);

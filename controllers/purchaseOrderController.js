@@ -92,7 +92,7 @@ exports.getAllPurchaseOrders = async (req, res) => {
 };
 
 /**
- * Get purchase order by ID with items
+ * Get purchase order by ID with items and batches
  * GET /api/purchase-orders/:id
  */
 exports.getPurchaseOrderById = async (req, res) => {
@@ -124,7 +124,33 @@ exports.getPurchaseOrderById = async (req, res) => {
       return errorResponse(res, 'Purchase order not found', 404);
     }
 
-    return successResponse(res, purchaseOrder);
+    // Fetch all batches related to this PO (via materials in this PO)
+    const materialIds = purchaseOrder.items.map(item => item.material_id);
+    let batches = [];
+
+    if (materialIds.length > 0) {
+      batches = await RawMaterialBatch.findAll({
+        where: {
+          material_id: {
+            [Op.in]: materialIds,
+          },
+          supplier_id: purchaseOrder.supplier_id,
+        },
+        include: [
+          {
+            model: RawMaterial,
+            as: 'material',
+            attributes: ['id', 'code', 'name', 'unit'],
+          },
+        ],
+        order: [['created_at', 'DESC']],
+      });
+    }
+
+    return successResponse(res, {
+      ...purchaseOrder.toJSON(),
+      batches,
+    });
   } catch (error) {
     console.error('Error fetching purchase order:', error);
     return errorResponse(res, 'Failed to fetch purchase order', 500);
@@ -253,7 +279,20 @@ exports.createPurchaseOrder = async (req, res) => {
   try {
     const createdPo = await PurchaseOrder.findByPk(purchaseOrder.id, {
       include: [
-        { model: Supplier, as: 'supplier', attributes: ['id', 'code', 'name', 'contact_person', 'phone', 'email', 'address', 'balance'] },
+        {
+          model: Supplier,
+          as: 'supplier',
+          attributes: [
+            'id',
+            'code',
+            'name',
+            'contact_person',
+            'phone',
+            'email',
+            'address',
+            'balance',
+          ],
+        },
         {
           model: PoItem,
           as: 'items',
@@ -286,7 +325,9 @@ exports.updatePurchaseOrder = async (req, res) => {
     const { id } = req.params;
     const { supplier_id, order_date, expected_date, notes, items } = req.body;
 
-    const purchaseOrder = await PurchaseOrder.findByPk(id);
+    const purchaseOrder = await PurchaseOrder.findByPk(id, {
+      include: [{ model: Supplier, as: 'supplier' }],
+    });
     if (!purchaseOrder) {
       await transaction.rollback();
       return errorResponse(res, 'Purchase order not found', 404);
@@ -311,6 +352,10 @@ exports.updatePurchaseOrder = async (req, res) => {
       }
     }
 
+    // Store old total amount for balance adjustment
+    const oldTotalAmount = parseFloat(purchaseOrder.total_amount || 0);
+    let newTotalAmount = oldTotalAmount;
+
     // Update PO items if provided
     if (items && items.length > 0) {
       // Verify all raw materials exist
@@ -326,10 +371,10 @@ exports.updatePurchaseOrder = async (req, res) => {
       await PoItem.destroy({ where: { po_id: id }, transaction });
 
       // Calculate new total amount
-      let total_amount = 0;
+      newTotalAmount = 0;
       items.forEach(item => {
         const itemTotal = parseFloat(item.quantity) * parseFloat(item.unit_cost);
-        total_amount += itemTotal;
+        newTotalAmount += itemTotal;
       });
 
       // Create new items
@@ -344,7 +389,20 @@ exports.updatePurchaseOrder = async (req, res) => {
       await PoItem.bulkCreate(poItems, { transaction });
 
       // Update total amount
-      await purchaseOrder.update({ total_amount: total_amount.toFixed(2) }, { transaction });
+      await purchaseOrder.update({ total_amount: newTotalAmount.toFixed(2) }, { transaction });
+
+      // Adjust supplier balance if total amount changed
+      if (newTotalAmount !== oldTotalAmount) {
+        const balanceDifference = newTotalAmount - oldTotalAmount;
+        const supplier = purchaseOrder.supplier;
+        const newBalance = parseFloat(supplier.balance || 0) + balanceDifference;
+
+        await supplier.update({ balance: newBalance.toFixed(2) }, { transaction });
+
+        console.log(
+          `Supplier balance adjusted by ${balanceDifference} (from ${oldTotalAmount} to ${newTotalAmount})`
+        );
+      }
     }
 
     // Update basic fields
@@ -360,7 +418,7 @@ exports.updatePurchaseOrder = async (req, res) => {
     // Fetch updated PO with relations
     const updatedPo = await PurchaseOrder.findByPk(id, {
       include: [
-        { model: Supplier, as: 'supplier', attributes: ['id', 'code', 'name'] },
+        { model: Supplier, as: 'supplier', attributes: ['id', 'code', 'name', 'balance'] },
         {
           model: PoItem,
           as: 'items',
@@ -444,11 +502,16 @@ exports.receivePurchaseOrder = async (req, res) => {
 
     // Phase 2: Need at least one return item or at least one received item with > 0 quantity
     const hasReturnItems = return_items && return_items.length > 0;
-    const hasReceivedItems = received_items && received_items.some(item => parseFloat(item.quantity_received) > 0);
+    const hasReceivedItems =
+      received_items && received_items.some(item => parseFloat(item.quantity_received) > 0);
 
     if (!hasReturnItems && !hasReceivedItems) {
       await transaction.rollback();
-      return errorResponse(res, 'Either received items (with quantity > 0) or return items are required', 400);
+      return errorResponse(
+        res,
+        'Either received items (with quantity > 0) or return items are required',
+        400
+      );
     }
 
     const purchaseOrder = await PurchaseOrder.findByPk(id, {
@@ -474,7 +537,11 @@ exports.receivePurchaseOrder = async (req, res) => {
     // Phase 1.3: Allow multiple receipts for pending or partial POs (not for fully received)
     if (purchaseOrder.status === 'received' && !hasReturnItems) {
       await transaction.rollback();
-      return errorResponse(res, 'Cannot receive additional items for an already fully received purchase order. Use return transaction if needed.', 400);
+      return errorResponse(
+        res,
+        'Cannot receive additional items for an already fully received purchase order. Use return transaction if needed.',
+        400
+      );
     }
 
     if (purchaseOrder.status === 'cancelled') {
@@ -586,12 +653,11 @@ exports.receivePurchaseOrder = async (req, res) => {
         let sourceBatchId = null;
         if (returnItem.source_batch_id) {
           console.log('Validating source_batch_id:', returnItem.source_batch_id);
-          
+
           try {
-            const sourceBatch = await RawMaterialBatch.findByPk(
-              returnItem.source_batch_id,
-              { transaction }
-            );
+            const sourceBatch = await RawMaterialBatch.findByPk(returnItem.source_batch_id, {
+              transaction,
+            });
 
             if (!sourceBatch) {
               await transaction.rollback();
@@ -626,11 +692,7 @@ exports.receivePurchaseOrder = async (req, res) => {
           } catch (validationError) {
             console.error('Source batch validation error:', validationError);
             await transaction.rollback();
-            return errorResponse(
-              res,
-              `Batch validation error: ${validationError.message}`,
-              500
-            );
+            return errorResponse(res, `Batch validation error: ${validationError.message}`, 500);
           }
         }
 
@@ -699,7 +761,11 @@ exports.receivePurchaseOrder = async (req, res) => {
       ],
     });
 
-    return successResponse(res, { po: updatedPo, batches: createdBatches }, 'Purchase order received successfully');
+    return successResponse(
+      res,
+      { po: updatedPo, batches: createdBatches },
+      'Purchase order received successfully'
+    );
   } catch (error) {
     await transaction.rollback();
     console.error('Error receiving purchase order:', error);
@@ -746,7 +812,7 @@ exports.updatePurchaseOrderStatus = async (req, res) => {
 /**
  * Cancel a purchase order
  * PUT /api/purchase-orders/:id/cancel
- * 
+ *
  * Only pending POs can be cancelled. Reverses supplier balance.
  */
 exports.cancelPurchaseOrder = async (req, res) => {
