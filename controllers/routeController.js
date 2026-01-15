@@ -200,7 +200,7 @@ exports.deleteRoute = async (req, res) => {
 
     await transaction.commit();
 
-    return successResponse(res, null, 'Route deleted successfully');
+    return successResponse(res, { message: 'Route deleted successfully' });
   } catch (err) {
     await transaction.rollback();
     console.error('Error deleting route:', err);

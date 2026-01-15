@@ -203,7 +203,7 @@ exports.deleteVehicle = async (req, res) => {
 
     await transaction.commit();
 
-    return successResponse(res, null, 'Vehicle deleted successfully');
+    return successResponse(res, { message: 'Vehicle deleted successfully' });
   } catch (err) {
     await transaction.rollback();
     console.error('Error deleting vehicle:', err);

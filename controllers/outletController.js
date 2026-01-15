@@ -23,12 +23,14 @@ exports.getAllOutlets = async (req, res) => {
 
     const where = {};
 
-    // Search by code, name, or owner_name
+    // Search by code, name, owner_name, phone, or email
     if (search) {
       where[Op.or] = [
         { code: { [Op.like]: `%${search}%` } },
         { name: { [Op.like]: `%${search}%` } },
         { owner_name: { [Op.like]: `%${search}%` } },
+        { phone: { [Op.like]: `%${search}%` } },
+        { email: { [Op.like]: `%${search}%` } },
       ];
     }
 
@@ -81,7 +83,7 @@ exports.getOutletById = async (req, res) => {
         {
           model: Route,
           as: 'route',
-          attributes: ['id', 'code', 'name'],
+          attributes: ['id', 'code', 'name', 'status'],
         },
       ],
     });
@@ -243,7 +245,7 @@ exports.deleteOutlet = async (req, res) => {
 
     await transaction.commit();
 
-    return successResponse(res, null, 'Outlet deleted successfully');
+    return successResponse(res, { message: 'Outlet deleted successfully' });
   } catch (err) {
     await transaction.rollback();
     console.error('Error deleting outlet:', err);

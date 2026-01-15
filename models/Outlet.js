@@ -48,7 +48,7 @@ module.exports = (sequelize, DataTypes) => {
         defaultValue: 0,
       },
       payment_terms: {
-        type: DataTypes.ENUM('cash', 'credit'),
+        type: DataTypes.ENUM('cash', 'credit', 'cheque', 'bank_transfer', 'card', 'mixed'),
         defaultValue: 'cash',
       },
       status: {

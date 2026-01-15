@@ -23,11 +23,13 @@ exports.getAllEmployees = async (req, res) => {
 
     const where = {};
 
-    // Search by code or name
+    // Search by code, name, phone, or email
     if (search) {
       where[Op.or] = [
         { code: { [Op.like]: `%${search}%` } },
         { name: { [Op.like]: `%${search}%` } },
+        { phone: { [Op.like]: `%${search}%` } },
+        { email: { [Op.like]: `%${search}%` } },
       ];
     }
 
@@ -55,7 +57,7 @@ exports.getAllEmployees = async (req, res) => {
         {
           model: Route,
           as: 'assignedRoute',
-          attributes: ['id', 'code', 'name'],
+          attributes: ['id', 'code', 'name', 'status'],
         },
       ],
     });
@@ -85,7 +87,7 @@ exports.getEmployeeById = async (req, res) => {
         {
           model: Route,
           as: 'assignedRoute',
-          attributes: ['id', 'code', 'name'],
+          attributes: ['id', 'code', 'name', 'status'],
         },
       ],
     });
@@ -223,7 +225,7 @@ exports.deleteEmployee = async (req, res) => {
 
     await transaction.commit();
 
-    return successResponse(res, employee, 'Employee deactivated successfully');
+    return successResponse(res, { message: 'Employee deleted successfully' });
   } catch (err) {
     await transaction.rollback();
     console.error('Error deleting employee:', err);
