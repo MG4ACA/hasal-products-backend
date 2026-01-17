@@ -44,6 +44,13 @@ router.post(
   supplierPaymentController.createSupplierPayment
 );
 
+// PUT /api/suppliers/:id/payments/:paymentId/clear - Clear pending payment
+router.put(
+  '/:id/payments/:paymentId/clear',
+  roleCheck(['admin', 'manager', 'accountant']),
+  supplierController.clearSupplierPayment
+);
+
 // PUT /api/suppliers/:id/payments/:paymentId - Update supplier payment (check clearance)
 router.put(
   '/:id/payments/:paymentId',

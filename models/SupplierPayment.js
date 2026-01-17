@@ -35,6 +35,11 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.ENUM('cash', 'credit', 'bank_transfer', 'check'),
         allowNull: false,
       },
+      payment_status: {
+        type: DataTypes.ENUM('pending', 'cleared', 'cancelled', 'bounced'),
+        allowNull: false,
+        defaultValue: 'cleared',
+      },
       check_number: {
         type: DataTypes.STRING(50),
       },
@@ -67,6 +72,7 @@ module.exports = (sequelize, DataTypes) => {
         { fields: ['supplier_id'] },
         { fields: ['purchase_order_id'] },
         { fields: ['payment_date'] },
+        { fields: ['payment_status'] },
         { fields: ['check_number'] },
       ],
     }

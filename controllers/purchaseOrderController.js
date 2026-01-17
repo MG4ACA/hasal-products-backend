@@ -739,6 +739,7 @@ exports.receivePurchaseOrder = async (req, res) => {
     const supplier = purchaseOrder.supplier;
     const isFirstReceive = purchaseOrder.status === 'pending';
     let paymentAmount = 0;
+    let shouldReduceBalance = false; // Default: don't reduce balance (for no payment or pending payments)
 
     // Create supplier payment if provided
     let createdPayment = null;
@@ -751,22 +752,41 @@ exports.receivePurchaseOrder = async (req, res) => {
         return errorResponse(res, 'Payment amount cannot be negative', 400);
       }
 
-      // Prevent overpayment validation
+      // Determine payment status and clearance based on payment method
+      const paymentMethod = payment.payment_method || 'cash';
+      let paymentStatus, clearanceDate;
+
+      if (paymentMethod === 'cash' || paymentMethod === 'bank_transfer') {
+        paymentStatus = 'cleared';
+        clearanceDate = new Date();
+        shouldReduceBalance = true;
+      } else if (paymentMethod === 'check' || paymentMethod === 'credit') {
+        paymentStatus = 'pending';
+        clearanceDate = null;
+        shouldReduceBalance = false;
+      } else {
+        await transaction.rollback();
+        return errorResponse(res, 'Invalid payment method', 400);
+      }
+
+      // Prevent overpayment validation (only for immediate payments)
       const outstandingBalance = parseFloat(supplier.balance || 0);
       const poTotalAmount = parseFloat(purchaseOrder.total_amount || 0);
 
-      // Calculate max allowable payment based on whether this is first or subsequent receive
-      const maxAllowablePayment = isFirstReceive
-        ? outstandingBalance + poTotalAmount // First receive: can pay up to old balance + full PO amount
-        : outstandingBalance; // Subsequent receive: can only pay current balance
+      if (shouldReduceBalance) {
+        // Calculate max allowable payment based on whether this is first or subsequent receive
+        const maxAllowablePayment = isFirstReceive
+          ? outstandingBalance + poTotalAmount // First receive: can pay up to old balance + full PO amount
+          : outstandingBalance; // Subsequent receive: can only pay current balance
 
-      if (paymentAmount > maxAllowablePayment) {
-        await transaction.rollback();
-        const message = isFirstReceive
-          ? `Payment amount (Rs. ${paymentAmount}) exceeds total payable amount (Rs. ${maxAllowablePayment.toFixed(2)}). ` +
-            `Current balance: Rs. ${outstandingBalance.toFixed(2)}, PO total: Rs. ${poTotalAmount.toFixed(2)}`
-          : `Payment amount (Rs. ${paymentAmount}) exceeds outstanding balance (Rs. ${outstandingBalance.toFixed(2)})`;
-        return errorResponse(res, message, 400);
+        if (paymentAmount > maxAllowablePayment) {
+          await transaction.rollback();
+          const message = isFirstReceive
+            ? `Payment amount (Rs. ${paymentAmount}) exceeds total payable amount (Rs. ${maxAllowablePayment.toFixed(2)}). ` +
+              `Current balance: Rs. ${outstandingBalance.toFixed(2)}, PO total: Rs. ${poTotalAmount.toFixed(2)}`
+            : `Payment amount (Rs. ${paymentAmount}) exceeds outstanding balance (Rs. ${outstandingBalance.toFixed(2)})`;
+          return errorResponse(res, message, 400);
+        }
       }
 
       // Create payment record
@@ -776,12 +796,13 @@ exports.receivePurchaseOrder = async (req, res) => {
           purchase_order_id: purchaseOrder.id,
           amount: paymentAmount,
           payment_date: new Date(),
-          payment_method: payment.payment_method || 'cash',
+          payment_method: paymentMethod,
+          payment_status: paymentStatus,
+          check_number: paymentMethod === 'check' ? payment.check_number : null,
+          check_date: paymentMethod === 'check' ? payment.check_date : null,
+          clearance_date: clearanceDate,
           reference: payment.reference || null,
           notes: payment.notes || `Payment during PO #${purchaseOrder.po_number} receive`,
-          check_number: payment.check_number || null,
-          check_date: payment.check_date || null,
-          check_status: payment.payment_method === 'check' ? 'pending' : null,
           created_by: req.user?.id || null,
         },
         { transaction }
@@ -789,8 +810,9 @@ exports.receivePurchaseOrder = async (req, res) => {
     }
 
     // Calculate new balance based on whether this is first receive or not
-    // - First receive (status was 'pending'): Add FULL PO amount, then subtract payment
-    // - Subsequent receive (status was 'partial'): Only subtract payment (PO amount already added on first receive)
+    // - First receive (status was 'pending'): Add FULL PO amount, then subtract payment (if cleared)
+    // - Subsequent receive (status was 'partial'): Only subtract payment (if cleared)
+    // - Check/Credit payments: Don't reduce balance until cleared
 
     // Fetch fresh supplier balance before updating (not the one from PO association which might be stale)
     const freshSupplier = await Supplier.findByPk(purchaseOrder.supplier_id, { transaction });
@@ -801,7 +823,24 @@ exports.receivePurchaseOrder = async (req, res) => {
 
     // If first receive: add full PO amount. If subsequent: add nothing
     const amountToAdd = isFirstReceive ? poTotalAmount : 0;
-    const newBalance = Math.max(0, oldBalance + amountToAdd - paymentAmount);
+
+    // Only deduct payment if it's an immediate payment (cash/bank)
+    // Check/credit payments don't reduce balance until cleared
+    const paymentToDeduct = createdPayment && shouldReduceBalance ? paymentAmount : 0;
+    const newBalance = Math.max(0, oldBalance + amountToAdd - paymentToDeduct);
+
+    console.log(
+      `PO Receive Balance Update: Supplier ${purchaseOrder.supplier_id}, PO #${purchaseOrder.po_number}`
+    );
+    console.log(`  First Receive: ${isFirstReceive}`);
+    console.log(`  Old Balance: Rs. ${oldBalance.toFixed(2)}`);
+    console.log(`  Amount to Add (PO): Rs. ${amountToAdd.toFixed(2)}`);
+    console.log(`  Payment Amount: Rs. ${paymentAmount.toFixed(2)}`);
+    console.log(
+      `  Payment Method: ${createdPayment?.payment_method || 'none'} (${createdPayment?.payment_status || 'n/a'})`
+    );
+    console.log(`  Payment to Deduct: Rs. ${paymentToDeduct.toFixed(2)}`);
+    console.log(`  New Balance: Rs. ${newBalance.toFixed(2)}`);
 
     // Update supplier balance using Supplier model directly with transaction
     const updateResult = await Supplier.update(

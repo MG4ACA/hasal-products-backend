@@ -326,6 +326,7 @@ exports.getAllSupplierPayments = async (req, res) => {
     const {
       supplier_id,
       payment_method,
+      payment_status,
       start_date,
       end_date,
       check_status,
@@ -345,6 +346,11 @@ exports.getAllSupplierPayments = async (req, res) => {
       where.payment_method = payment_method;
     }
 
+    // Filter by payment_status (new)
+    if (payment_status) {
+      where.payment_status = payment_status;
+    }
+
     if (start_date && end_date) {
       where.payment_date = {
         [Op.between]: [start_date, end_date],
@@ -359,21 +365,19 @@ exports.getAllSupplierPayments = async (req, res) => {
       };
     }
 
-    // Filter by check status
+    // Filter by check status (backward compatibility)
     if (check_status) {
       where.payment_method = 'check';
 
       if (check_status === 'pending') {
-        where.clearance_date = null;
+        where.payment_status = 'pending';
       } else if (check_status === 'cleared') {
-        where.clearance_date = {
-          [Op.ne]: null,
-        };
+        where.payment_status = 'cleared';
       } else if (check_status === 'overdue') {
         const thirtyDaysAgo = new Date();
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-        where.clearance_date = null;
+        where.payment_status = 'pending';
         where.check_date = {
           [Op.lt]: thirtyDaysAgo.toISOString().split('T')[0],
         };
@@ -456,8 +460,26 @@ exports.createSupplierPayment = async (req, res) => {
       return errorResponse(res, 'Supplier not found', 404);
     }
 
-    // Check if payment amount exceeds balance
-    if (parseFloat(amount) > parseFloat(supplier.balance)) {
+    // Determine payment status and clearance date based on payment method
+    let paymentStatus, clearanceDate, shouldReduceBalance;
+
+    if (payment_method === 'cash' || payment_method === 'bank_transfer') {
+      // Immediate payment methods
+      paymentStatus = 'cleared';
+      clearanceDate = payment_date;
+      shouldReduceBalance = true;
+    } else if (payment_method === 'check' || payment_method === 'credit') {
+      // Deferred payment methods
+      paymentStatus = 'pending';
+      clearanceDate = null;
+      shouldReduceBalance = false;
+    } else {
+      await transaction.rollback();
+      return errorResponse(res, 'Invalid payment method', 400);
+    }
+
+    // Check if payment amount exceeds balance (only for immediate payments)
+    if (shouldReduceBalance && parseFloat(amount) > parseFloat(supplier.balance)) {
       await transaction.rollback();
       return errorResponse(res, 'Payment amount exceeds supplier balance', 400);
     }
@@ -471,9 +493,10 @@ exports.createSupplierPayment = async (req, res) => {
         payment_date,
         amount: parseFloat(amount),
         payment_method,
+        payment_status: paymentStatus,
         check_number: payment_method === 'check' ? check_number : null,
         check_date: payment_method === 'check' ? check_date : null,
-        clearance_date: null,
+        clearance_date: clearanceDate,
         reference,
         notes,
         created_by: req.user.id,
@@ -481,9 +504,11 @@ exports.createSupplierPayment = async (req, res) => {
       { transaction }
     );
 
-    // Reduce supplier balance
-    const newBalance = parseFloat(supplier.balance) - parseFloat(amount);
-    await supplier.update({ balance: newBalance }, { transaction });
+    // Reduce supplier balance only for immediate payment methods
+    if (shouldReduceBalance) {
+      const newBalance = parseFloat(supplier.balance) - parseFloat(amount);
+      await supplier.update({ balance: newBalance }, { transaction });
+    }
 
     await transaction.commit();
 
@@ -509,6 +534,107 @@ exports.createSupplierPayment = async (req, res) => {
     await transaction.rollback();
     console.error('Create supplier payment error:', error);
     return errorResponse(res, 'Error creating supplier payment', 500, error.message);
+  }
+};
+
+// PUT /api/suppliers/:id/payments/:paymentId/clear - Clear pending payment
+exports.clearSupplierPayment = async (req, res) => {
+  const { sequelize } = require('../models');
+  const transaction = await sequelize.transaction();
+
+  try {
+    const { id, paymentId } = req.params;
+    const { clearance_date } = req.body;
+
+    const { SupplierPayment } = require('../models');
+
+    // Find payment
+    const payment = await SupplierPayment.findOne({
+      where: { id: paymentId, supplier_id: id },
+      transaction,
+    });
+
+    if (!payment) {
+      await transaction.rollback();
+      return errorResponse(res, 'Payment not found', 404);
+    }
+
+    // Check if already cleared
+    if (payment.payment_status === 'cleared') {
+      await transaction.rollback();
+      return errorResponse(res, 'Payment is already cleared', 400);
+    }
+
+    // Check if cancelled or bounced
+    if (payment.payment_status === 'cancelled' || payment.payment_status === 'bounced') {
+      await transaction.rollback();
+      return errorResponse(res, `Cannot clear ${payment.payment_status} payment`, 400);
+    }
+
+    // Verify supplier exists
+    const supplier = await Supplier.findByPk(id, { transaction });
+    if (!supplier) {
+      await transaction.rollback();
+      return errorResponse(res, 'Supplier not found', 404);
+    }
+
+    // Validate clearance date
+    const clearDate = clearance_date || new Date().toISOString().split('T')[0];
+
+    // Clearance date cannot be before payment date
+    if (new Date(clearDate) < new Date(payment.payment_date)) {
+      await transaction.rollback();
+      return errorResponse(res, 'Clearance date cannot be before payment date', 400);
+    }
+
+    // For checks, clearance date cannot be before check date
+    if (payment.payment_method === 'check' && payment.check_date) {
+      if (new Date(clearDate) < new Date(payment.check_date)) {
+        await transaction.rollback();
+        return errorResponse(res, 'Clearance date cannot be before check date', 400);
+      }
+    }
+
+    // Update payment status and clearance date
+    await payment.update(
+      {
+        payment_status: 'cleared',
+        clearance_date: clearDate,
+      },
+      { transaction }
+    );
+
+    // Reduce supplier balance
+    const newBalance = parseFloat(supplier.balance) - parseFloat(payment.amount);
+    await supplier.update({ balance: newBalance }, { transaction });
+
+    await transaction.commit();
+
+    // Fetch updated payment with associations (after commit, outside transaction)
+    const { User } = require('../models');
+    const clearedPayment = await SupplierPayment.findByPk(payment.id, {
+      include: [
+        {
+          model: Supplier,
+          as: 'supplier',
+          attributes: ['id', 'code', 'name', 'balance'],
+        },
+        {
+          model: User,
+          as: 'creator',
+          attributes: ['id', 'username', 'name'],
+        },
+      ],
+    });
+
+    return successResponse(res, clearedPayment, 'Payment cleared successfully', 200);
+  } catch (error) {
+    // Only rollback if transaction hasn't been committed yet
+    if (!transaction.finished) {
+      await transaction.rollback();
+    }
+    console.error('Clear supplier payment error:', error);
+    return errorResponse(res, 'Error clearing payment', 500, error.message);
   }
 };
 

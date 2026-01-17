@@ -169,18 +169,37 @@ exports.createSupplierPayment = async (req, res) => {
       return errorResponse(res, 'Supplier not found', 404);
     }
 
-    // Prevent overpayment: payment amount cannot exceed outstanding balance
-    const outstandingBalance = parseFloat(supplier.balance || 0);
-    if (parsedAmount > outstandingBalance) {
-      let message = '';
-      if (outstandingBalance === 0) {
-        message = 'This supplier account is fully settled. No payment is required at this time.';
-      } else {
-        message =
-          `Payment amount (Rs. ${parsedAmount}) exceeds outstanding balance (Rs. ${outstandingBalance}). ` +
-          `Maximum allowed payment: Rs. ${outstandingBalance}`;
+    // Determine payment status and clearance date based on payment method
+    let paymentStatus, clearanceDate, shouldReduceBalance;
+
+    if (payment_method === 'cash' || payment_method === 'bank_transfer') {
+      // Immediate payment methods
+      paymentStatus = 'cleared';
+      clearanceDate = payment_date;
+      shouldReduceBalance = true;
+    } else if (payment_method === 'check' || payment_method === 'credit') {
+      // Deferred payment methods
+      paymentStatus = 'pending';
+      clearanceDate = null;
+      shouldReduceBalance = false;
+    } else {
+      return errorResponse(res, 'Invalid payment method', 400);
+    }
+
+    // Prevent overpayment (only for immediate payments)
+    if (shouldReduceBalance) {
+      const outstandingBalance = parseFloat(supplier.balance || 0);
+      if (parsedAmount > outstandingBalance) {
+        let message = '';
+        if (outstandingBalance === 0) {
+          message = 'This supplier account is fully settled. No payment is required at this time.';
+        } else {
+          message =
+            `Payment amount (Rs. ${parsedAmount}) exceeds outstanding balance (Rs. ${outstandingBalance}). ` +
+            `Maximum allowed payment: Rs. ${outstandingBalance}`;
+        }
+        return errorResponse(res, message, 400);
       }
-      return errorResponse(res, message, 400);
     }
 
     // If check, validate check fields
@@ -201,25 +220,31 @@ exports.createSupplierPayment = async (req, res) => {
       payment_date,
       amount: parsedAmount,
       payment_method,
+      payment_status: paymentStatus,
       check_number: payment_method === 'check' ? check_number : null,
       check_date: payment_method === 'check' ? check_date : null,
-      clearance_date: payment_method === 'check' ? clearance_date : null,
+      clearance_date: clearanceDate,
       reference,
       notes,
       created_by: userId,
     });
 
-    // Update supplier balance (reduce balance by payment amount)
-    // Balance Direction: Positive = we owe supplier
-    // Formula: NewBalance = OldBalance - PaymentAmount, minimum 0
-    const newBalance = Math.max(0, parseFloat(supplier.balance || 0) - parsedAmount);
+    // Update supplier balance only for immediate payment methods
+    if (shouldReduceBalance) {
+      const newBalance = Math.max(0, parseFloat(supplier.balance || 0) - parsedAmount);
 
-    console.log(`Standalone Payment Update: Supplier ${supplier_id}`);
-    console.log(`  Old Balance: ${supplier.balance}`);
-    console.log(`  Payment Amount: ${parsedAmount}`);
-    console.log(`  New Balance: ${newBalance}`);
+      console.log(`Standalone Payment Update: Supplier ${supplier_id}`);
+      console.log(`  Payment Method: ${payment_method} (${paymentStatus})`);
+      console.log(`  Old Balance: ${supplier.balance}`);
+      console.log(`  Payment Amount: ${parsedAmount}`);
+      console.log(`  New Balance: ${newBalance}`);
 
-    await Supplier.update({ balance: newBalance.toFixed(2) }, { where: { id: supplier_id } });
+      await Supplier.update({ balance: newBalance.toFixed(2) }, { where: { id: supplier_id } });
+    } else {
+      console.log(`Standalone Payment Created: Supplier ${supplier_id}`);
+      console.log(`  Payment Method: ${payment_method} (${paymentStatus})`);
+      console.log('  Balance unchanged (pending payment)');
+    }
 
     // Fetch updated supplier to return fresh data
     const updatedSupplier = await Supplier.findByPk(supplier_id, {
@@ -303,20 +328,29 @@ exports.deletePayment = async (req, res) => {
       return errorResponse(res, 'Payment not found', 404);
     }
 
-    // Reverse the payment from supplier balance
-    // When deleting payment: NewBalance = OldBalance + PaymentAmount (reverse the deduction)
-    const supplier = await Supplier.findByPk(payment.supplier_id);
-    const newBalance = parseFloat(supplier.balance || 0) + parseFloat(payment.amount);
+    // Reverse the payment from supplier balance ONLY if payment was cleared
+    // Pending payments never reduced the balance, so no reversal needed
+    if (payment.payment_status === 'cleared') {
+      const supplier = await Supplier.findByPk(payment.supplier_id);
+      const newBalance = parseFloat(supplier.balance || 0) + parseFloat(payment.amount);
 
-    await Supplier.update(
-      { balance: newBalance.toFixed(2) },
-      { where: { id: payment.supplier_id } }
-    );
+      console.log('Delete Payment - Reversing balance for cleared payment:');
+      console.log(`  Old Balance: ${supplier.balance}`);
+      console.log(`  Payment Amount: ${payment.amount}`);
+      console.log(`  New Balance: ${newBalance}`);
+
+      await Supplier.update(
+        { balance: newBalance.toFixed(2) },
+        { where: { id: payment.supplier_id } }
+      );
+    } else {
+      console.log(`Delete Payment - No balance change for ${payment.payment_status} payment`);
+    }
 
     // Delete payment
     await payment.destroy();
 
-    return successResponse(res, null, 'Payment deleted successfully');
+    return successResponse(res, { message: 'Payment deleted successfully' });
   } catch (error) {
     console.error('Error deleting payment:', error);
     return errorResponse(res, error.message, 500);
