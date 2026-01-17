@@ -1,6 +1,6 @@
-const { Supplier, PurchaseOrder } = require('../models');
+const { Supplier, PurchaseOrder, SupplierPayment } = require('../models');
 const { successResponse, errorResponse } = require('../utils/response');
-const { Op } = require('sequelize');
+const { Op, literal } = require('sequelize');
 
 // Generate unique supplier code
 const generateSupplierCode = async () => {
@@ -96,7 +96,30 @@ exports.getSupplierById = async (req, res) => {
       return errorResponse(res, 'Supplier not found', 404);
     }
 
-    return successResponse(res, { supplier });
+    // Calculate remaining balance for each PO
+    let supplierData = supplier.toJSON();
+
+    if (supplierData.purchaseOrders && supplierData.purchaseOrders.length > 0) {
+      supplierData.purchaseOrders = await Promise.all(
+        supplierData.purchaseOrders.map(async po => {
+          // Calculate total payments for this PO
+          const payments = await SupplierPayment.findAll({
+            where: { purchase_order_id: po.id },
+            attributes: [[literal('SUM(amount)'), 'total_paid']],
+            raw: true,
+          });
+
+          const totalPaid = parseFloat(payments[0]?.total_paid) || 0;
+          const poAmount = parseFloat(po.total_amount) || 0;
+          const balance = Math.max(0, poAmount - totalPaid);
+
+          po.balance = balance;
+          return po;
+        })
+      );
+    }
+
+    return successResponse(res, { supplier: supplierData });
   } catch (error) {
     console.error('Get supplier by ID error:', error);
     return errorResponse(res, 'Failed to fetch supplier', 500);
