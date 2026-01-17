@@ -4,6 +4,7 @@ const {
   Supplier,
   RawMaterial,
   RawMaterialBatch,
+  SupplierPayment,
   sequelize,
 } = require('../models');
 const { Op } = require('sequelize');
@@ -124,32 +125,33 @@ exports.getPurchaseOrderById = async (req, res) => {
       return errorResponse(res, 'Purchase order not found', 404);
     }
 
-    // Fetch all batches related to this PO (via materials in this PO)
-    const materialIds = purchaseOrder.items.map(item => item.material_id);
-    let batches = [];
-
-    if (materialIds.length > 0) {
-      batches = await RawMaterialBatch.findAll({
-        where: {
-          material_id: {
-            [Op.in]: materialIds,
-          },
-          supplier_id: purchaseOrder.supplier_id,
+    // Fetch batches created from THIS specific PO
+    const batches = await RawMaterialBatch.findAll({
+      where: {
+        purchase_order_id: id,
+      },
+      include: [
+        {
+          model: RawMaterial,
+          as: 'material',
+          attributes: ['id', 'code', 'name', 'unit'],
         },
-        include: [
-          {
-            model: RawMaterial,
-            as: 'material',
-            attributes: ['id', 'code', 'name', 'unit'],
-          },
-        ],
-        order: [['created_at', 'DESC']],
-      });
-    }
+      ],
+      order: [['created_at', 'DESC']],
+    });
+
+    // Fetch payments made for THIS specific PO
+    const payments = await SupplierPayment.findAll({
+      where: {
+        purchase_order_id: id,
+      },
+      order: [['payment_date', 'DESC']],
+    });
 
     return successResponse(res, {
       ...purchaseOrder.toJSON(),
       batches,
+      payments,
     });
   } catch (error) {
     console.error('Error fetching purchase order:', error);
@@ -261,11 +263,8 @@ exports.createPurchaseOrder = async (req, res) => {
 
     await transaction.commit();
 
-    // Update supplier balance
-    await Supplier.increment('balance', {
-      by: parseFloat(total_amount),
-      where: { id: supplier_id },
-    });
+    // Note: Supplier balance is NOT updated here during PO creation
+    // Balance only changes when payment is made during PO receive
   } catch (error) {
     if (transaction && !transaction.finished) {
       await transaction.rollback();
@@ -458,11 +457,12 @@ exports.deletePurchaseOrder = async (req, res) => {
     }
 
     // Only allow deletion if PO is pending
+    // This prevents deletion of POs that have been received (partial/received status)
     if (purchaseOrder.status !== 'pending') {
       await transaction.rollback();
       return errorResponse(
         res,
-        `Cannot delete purchase order with status: ${purchaseOrder.status}`,
+        `Cannot delete purchase order with status: ${purchaseOrder.status}. Only pending orders can be deleted.`,
         400
       );
     }
@@ -475,6 +475,7 @@ exports.deletePurchaseOrder = async (req, res) => {
 
     await transaction.commit();
 
+    // Note: No balance adjustment needed since pending POs don't affect supplier balance
     return successResponse(res, null, 'Purchase order deleted successfully');
   } catch (error) {
     await transaction.rollback();
@@ -492,7 +493,7 @@ exports.receivePurchaseOrder = async (req, res) => {
 
   try {
     const { id } = req.params;
-    const { received_date, received_items, return_items } = req.body;
+    const { received_date, received_items, return_items, payment } = req.body;
 
     // Phase 2: Allow return-only transactions (no new received items)
     if (!received_date) {
@@ -594,6 +595,7 @@ exports.receivePurchaseOrder = async (req, res) => {
         {
           material_id: receivedItem.raw_material_id,
           supplier_id: purchaseOrder.supplier_id,
+          purchase_order_id: purchaseOrder.id,
           batch_number: batchNumber,
           batch_type: 'receipt',
           quantity: receivedQty,
@@ -704,6 +706,7 @@ exports.receivePurchaseOrder = async (req, res) => {
           {
             material_id: returnItem.raw_material_id,
             supplier_id: purchaseOrder.supplier_id,
+            purchase_order_id: purchaseOrder.id,
             batch_number: returnBatchNumber,
             batch_type: 'return',
             return_reason: returnItem.return_reason,
@@ -726,11 +729,90 @@ exports.receivePurchaseOrder = async (req, res) => {
       }
     }
 
-    // Update supplier balance (only for received amount minus returns)
+    // Update supplier balance
+    // Balance Direction: +Balance = we owe supplier (liability/payable)
+    // Business Logic:
+    //   - FIRST receive from a PO (status = 'pending'): Add FULL PO amount to balance
+    //   - SUBSEQUENT receives (status = 'partial'): Don't add anything (PO amount already added)
+    //   - Payment: Always reduces balance
+    // Note: PO creation doesn't affect balance, only the FIRST receive does
     const supplier = purchaseOrder.supplier;
-    const netAmount = totalReceivedAmount - totalReturnAmount;
-    const newBalance = parseFloat(supplier.balance || 0) + netAmount;
-    await supplier.update({ balance: newBalance.toFixed(2) }, { transaction });
+    const isFirstReceive = purchaseOrder.status === 'pending';
+    let paymentAmount = 0;
+
+    // Create supplier payment if provided
+    let createdPayment = null;
+    if (payment && payment.amount) {
+      paymentAmount = parseFloat(payment.amount);
+
+      // Validate payment amount is not negative
+      if (paymentAmount < 0) {
+        await transaction.rollback();
+        return errorResponse(res, 'Payment amount cannot be negative', 400);
+      }
+
+      // Prevent overpayment validation
+      const outstandingBalance = parseFloat(supplier.balance || 0);
+      const poTotalAmount = parseFloat(purchaseOrder.total_amount || 0);
+
+      // Calculate max allowable payment based on whether this is first or subsequent receive
+      const maxAllowablePayment = isFirstReceive
+        ? outstandingBalance + poTotalAmount // First receive: can pay up to old balance + full PO amount
+        : outstandingBalance; // Subsequent receive: can only pay current balance
+
+      if (paymentAmount > maxAllowablePayment) {
+        await transaction.rollback();
+        const message = isFirstReceive
+          ? `Payment amount (Rs. ${paymentAmount}) exceeds total payable amount (Rs. ${maxAllowablePayment.toFixed(2)}). ` +
+            `Current balance: Rs. ${outstandingBalance.toFixed(2)}, PO total: Rs. ${poTotalAmount.toFixed(2)}`
+          : `Payment amount (Rs. ${paymentAmount}) exceeds outstanding balance (Rs. ${outstandingBalance.toFixed(2)})`;
+        return errorResponse(res, message, 400);
+      }
+
+      // Create payment record
+      createdPayment = await SupplierPayment.create(
+        {
+          supplier_id: purchaseOrder.supplier_id,
+          purchase_order_id: purchaseOrder.id,
+          amount: paymentAmount,
+          payment_date: new Date(),
+          payment_method: payment.payment_method || 'cash',
+          reference: payment.reference || null,
+          notes: payment.notes || `Payment during PO #${purchaseOrder.po_number} receive`,
+          check_number: payment.check_number || null,
+          check_date: payment.check_date || null,
+          check_status: payment.payment_method === 'check' ? 'pending' : null,
+          created_by: req.user?.id || null,
+        },
+        { transaction }
+      );
+    }
+
+    // Calculate new balance based on whether this is first receive or not
+    // - First receive (status was 'pending'): Add FULL PO amount, then subtract payment
+    // - Subsequent receive (status was 'partial'): Only subtract payment (PO amount already added on first receive)
+
+    // Fetch fresh supplier balance before updating (not the one from PO association which might be stale)
+    const freshSupplier = await Supplier.findByPk(purchaseOrder.supplier_id, { transaction });
+    const oldBalance = parseFloat(freshSupplier.balance || 0);
+
+    // Use isFirstReceive already calculated above (line 746)
+    const poTotalAmount = parseFloat(purchaseOrder.total_amount || 0);
+
+    // If first receive: add full PO amount. If subsequent: add nothing
+    const amountToAdd = isFirstReceive ? poTotalAmount : 0;
+    const newBalance = Math.max(0, oldBalance + amountToAdd - paymentAmount);
+
+    // Update supplier balance using Supplier model directly with transaction
+    const updateResult = await Supplier.update(
+      { balance: newBalance.toFixed(2) },
+      {
+        where: { id: purchaseOrder.supplier_id },
+        transaction: transaction,
+      }
+    );
+
+    console.log(`  Update Result: ${updateResult[0]} row(s) affected`);
 
     // Determine new status: "received" if all items received, "partial" if some, "cancelled" stays as is
     let newStatus = 'partial';
@@ -763,8 +845,12 @@ exports.receivePurchaseOrder = async (req, res) => {
 
     return successResponse(
       res,
-      { po: updatedPo, batches: createdBatches },
-      'Purchase order received successfully'
+      {
+        po: updatedPo,
+        batches: createdBatches,
+        payment: createdPayment,
+      },
+      'Purchase order received successfully' + (createdPayment ? ' and payment recorded' : '')
     );
   } catch (error) {
     await transaction.rollback();

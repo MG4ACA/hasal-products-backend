@@ -488,3 +488,31 @@ exports.createSupplierPayment = async (req, res) => {
     return errorResponse(res, 'Error creating supplier payment', 500, error.message);
   }
 };
+
+// GET /api/suppliers/:id/purchase-orders - Get purchase orders for supplier
+exports.getSupplierPurchaseOrders = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.query; // e.g., "pending,partial,received"
+
+    // Parse status filter
+    const statusArray = status ? status.split(',') : ['pending', 'partial', 'received'];
+
+    const purchaseOrders = await PurchaseOrder.findAll({
+      where: {
+        supplier_id: id,
+        status: {
+          [Op.in]: statusArray,
+        },
+      },
+      attributes: ['id', 'po_number', 'total_amount', 'status', 'order_date', 'expected_date'],
+      order: [['order_date', 'DESC']],
+      limit: 50, // Reasonable limit for dropdown
+    });
+
+    return successResponse(res, purchaseOrders);
+  } catch (error) {
+    console.error('Error fetching supplier purchase orders:', error);
+    return errorResponse(res, 'Failed to fetch purchase orders', 500);
+  }
+};

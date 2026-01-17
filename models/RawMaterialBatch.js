@@ -23,6 +23,14 @@ module.exports = (sequelize, DataTypes) => {
           key: 'id',
         },
       },
+      purchase_order_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+          model: 'purchase_orders',
+          key: 'id',
+        },
+      },
       batch_number: {
         type: DataTypes.STRING(50),
         allowNull: false,
@@ -107,6 +115,7 @@ module.exports = (sequelize, DataTypes) => {
         { fields: ['material_id'] },
         { fields: ['batch_number'] },
         { fields: ['supplier_id'] },
+        { fields: ['purchase_order_id'] },
         { fields: ['purchase_date'] },
       ],
     }

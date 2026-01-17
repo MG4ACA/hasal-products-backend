@@ -15,6 +15,14 @@ module.exports = (sequelize, DataTypes) => {
           key: 'id',
         },
       },
+      purchase_order_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+          model: 'purchase_orders',
+          key: 'id',
+        },
+      },
       payment_date: {
         type: DataTypes.DATEONLY,
         allowNull: false,
@@ -57,6 +65,7 @@ module.exports = (sequelize, DataTypes) => {
       createdAt: 'created_at',
       indexes: [
         { fields: ['supplier_id'] },
+        { fields: ['purchase_order_id'] },
         { fields: ['payment_date'] },
         { fields: ['check_number'] },
       ],
