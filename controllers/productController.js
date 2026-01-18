@@ -16,7 +16,7 @@ exports.getAllProducts = async (req, res) => {
     // Search filter
     if (search) {
       where[Op.or] = [
-        { product_code: { [Op.like]: `%${search}%` } },
+        { code: { [Op.like]: `%${search}%` } },
         { name: { [Op.like]: `%${search}%` } },
         { description: { [Op.like]: `%${search}%` } },
       ];
@@ -103,15 +103,15 @@ exports.createProduct = async (req, res) => {
     });
 
     let productCode = 'PROD001';
-    if (lastProduct && lastProduct.product_code) {
-      const lastNumber = parseInt(lastProduct.product_code.replace('PROD', ''));
+    if (lastProduct && lastProduct.code) {
+      const lastNumber = parseInt(lastProduct.code.replace('PROD', ''));
       const nextNumber = lastNumber + 1;
       productCode = `PROD${String(nextNumber).padStart(3, '0')}`;
     }
 
     // Create product
     const product = await Product.create({
-      product_code: productCode,
+      code: productCode,
       name,
       description,
       category,

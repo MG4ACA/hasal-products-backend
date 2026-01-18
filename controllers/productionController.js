@@ -251,7 +251,7 @@ exports.updateProductionRun = async (req, res) => {
         {
           model: Product,
           as: 'product',
-          attributes: ['id', 'product_code', 'name'],
+          attributes: ['id', 'code', 'name'],
         },
         {
           model: ProductSku,

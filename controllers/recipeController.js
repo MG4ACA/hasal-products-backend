@@ -82,7 +82,7 @@ exports.getRecipeById = async (req, res) => {
             {
               model: RawMaterial,
               as: 'material',
-              attributes: ['id', 'code', 'name', 'unit', 'avg_cost'],
+              attributes: ['id', 'code', 'name', 'unit'],
             },
           ],
         },
@@ -95,7 +95,7 @@ exports.getRecipeById = async (req, res) => {
 
     // Calculate total cost
     const totalCost = recipe.items.reduce((sum, item) => {
-      const cost = parseFloat(item.material.avg_cost || 0) * parseFloat(item.quantity || 0);
+      const cost = parseFloat(item.material.cost || 0) * parseFloat(item.quantity || 0);
       return sum + cost;
     }, 0);
 
@@ -207,7 +207,7 @@ exports.createRecipe = async (req, res) => {
             {
               model: RawMaterial,
               as: 'material',
-              attributes: ['id', 'code', 'name', 'unit', 'avg_cost'],
+              attributes: ['id', 'code', 'name', 'unit'],
             },
           ],
         },
@@ -298,7 +298,7 @@ exports.updateRecipe = async (req, res) => {
             {
               model: RawMaterial,
               as: 'material',
-              attributes: ['id', 'code', 'name', 'unit', 'avg_cost'],
+              attributes: ['id', 'code', 'name', 'unit'],
             },
           ],
         },
@@ -422,7 +422,7 @@ exports.addRecipeItem = async (req, res) => {
         {
           model: RawMaterial,
           as: 'material',
-          attributes: ['id', 'code', 'name', 'unit', 'avg_cost'],
+          attributes: ['id', 'code', 'name', 'unit'],
         },
       ],
     });
@@ -463,7 +463,7 @@ exports.updateRecipeItem = async (req, res) => {
         {
           model: RawMaterial,
           as: 'material',
-          attributes: ['id', 'code', 'name', 'unit', 'avg_cost'],
+          attributes: ['id', 'code', 'name', 'unit'],
         },
       ],
     });
