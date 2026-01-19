@@ -22,4 +22,8 @@ router.delete('/:productId/skus/:skuId', roleCheck(['admin']), productController
 // Stock routes
 router.get('/:id/stock', productController.getProductStock);
 
+// Profit routes
+router.get('/profit-summary', productController.getProfitSummary);
+router.get('/:productId/skus/:skuId/profit', productController.getSkuProfit);
+
 module.exports = router;

@@ -1,4 +1,4 @@
-const { Recipe, RecipeItem, RawMaterial } = require('../models');
+const { Recipe, RecipeItem, RawMaterial, Product, ProductSku } = require('../models');
 const { successResponse, errorResponse } = require('../utils/response');
 const { Op } = require('sequelize');
 const db = require('../models');
@@ -44,6 +44,16 @@ exports.getAllRecipes = async (req, res) => {
             },
           ],
         },
+        {
+          model: Product,
+          as: 'product',
+          attributes: ['id', 'code', 'name'],
+        },
+        {
+          model: ProductSku,
+          as: 'productSku',
+          attributes: ['id', 'size', 'unit', 'price'],
+        },
       ],
       order: [
         ['code', 'ASC'],
@@ -86,6 +96,16 @@ exports.getRecipeById = async (req, res) => {
             },
           ],
         },
+        {
+          model: Product,
+          as: 'product',
+          attributes: ['id', 'code', 'name'],
+        },
+        {
+          model: ProductSku,
+          as: 'productSku',
+          attributes: ['id', 'size', 'unit', 'price'],
+        },
       ],
     });
 
@@ -121,7 +141,16 @@ exports.createRecipe = async (req, res) => {
   const transaction = await db.sequelize.transaction();
 
   try {
-    const { code, name, expected_yield, yield_unit, notes = '', items = [] } = req.body;
+    const {
+      code,
+      name,
+      expected_yield,
+      yield_unit,
+      notes = '',
+      items = [],
+      product_id,
+      product_sku_id,
+    } = req.body;
 
     // Validation
     if (!code) {
@@ -132,6 +161,36 @@ exports.createRecipe = async (req, res) => {
     if (!name) {
       await transaction.rollback();
       return errorResponse(res, 'Recipe name is required', 400);
+    }
+
+    if (!product_id) {
+      await transaction.rollback();
+      return errorResponse(res, 'Product is required', 400);
+    }
+
+    if (!product_sku_id) {
+      await transaction.rollback();
+      return errorResponse(res, 'Product SKU is required', 400);
+    }
+
+    // Verify product exists
+    const product = await Product.findByPk(product_id);
+    if (!product) {
+      await transaction.rollback();
+      return errorResponse(res, 'Product not found', 404);
+    }
+
+    // Verify SKU exists and belongs to product
+    const sku = await ProductSku.findOne({
+      where: { id: product_sku_id, product_id: product_id },
+    });
+    if (!sku) {
+      await transaction.rollback();
+      return errorResponse(
+        res,
+        'Product SKU not found or does not belong to selected product',
+        404
+      );
     }
 
     if (!expected_yield || expected_yield <= 0) {
@@ -159,6 +218,8 @@ exports.createRecipe = async (req, res) => {
       {
         code,
         name,
+        product_id,
+        product_sku_id,
         version: 1,
         expected_yield,
         yield_unit,
@@ -210,6 +271,16 @@ exports.createRecipe = async (req, res) => {
               attributes: ['id', 'code', 'name', 'unit'],
             },
           ],
+        },
+        {
+          model: Product,
+          as: 'product',
+          attributes: ['id', 'code', 'name'],
+        },
+        {
+          model: ProductSku,
+          as: 'productSku',
+          attributes: ['id', 'size', 'unit', 'price'],
         },
       ],
     });

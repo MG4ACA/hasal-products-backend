@@ -32,4 +32,8 @@ router.post(
 // Check material availability
 router.get('/:id/check-materials', productionController.checkMaterialAvailability);
 
+// Waste and efficiency reports
+router.get('/waste-cost-report', productionController.getWasteCostReport);
+router.get('/efficiency-report', productionController.getEfficiencyReport);
+
 module.exports = router;

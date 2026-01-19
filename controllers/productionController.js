@@ -12,6 +12,7 @@ const {
 const { successResponse, errorResponse } = require('../utils/response');
 const { Op } = require('sequelize');
 const db = require('../models');
+const { generateFinishedGoodsBatchNumber } = require('../utils/batchNumberGenerator');
 
 /**
  * Get all production runs with pagination and filters
@@ -314,7 +315,7 @@ exports.deleteProductionRun = async (req, res) => {
 };
 
 /**
- * Complete production run with FIFO batch consumption
+ * Complete production run with FIFO batch consumption, cost tracking, and waste allocation
  * POST /api/production-runs/:id/complete
  */
 exports.completeProductionRun = async (req, res) => {
@@ -345,6 +346,19 @@ exports.completeProductionRun = async (req, res) => {
                 },
               ],
             },
+            {
+              model: ProductSku,
+              as: 'productSku',
+              attributes: [
+                'id',
+                'size',
+                'unit',
+                'price',
+                'current_stock',
+                'average_cost',
+                'product_id',
+              ],
+            },
           ],
         },
       ],
@@ -360,10 +374,14 @@ exports.completeProductionRun = async (req, res) => {
       return errorResponse(res, 'Production run already completed', 400);
     }
 
-    // Calculate scaling factor
-    const scaleFactor = quantity_produced / productionRun.recipe.batch_size;
+    // Calculate scaling factor based on expected yield
+    const expectedYield = parseFloat(productionRun.recipe.expected_yield);
+    const scaleFactor = quantity_produced / expectedYield;
 
-    // Process each recipe item with FIFO logic
+    // Track total material cost
+    let totalMaterialCost = 0;
+
+    // Process each recipe item with FIFO logic and cost tracking
     for (const item of productionRun.recipe.items) {
       const requiredQuantity = parseFloat(item.quantity) * scaleFactor;
 
@@ -382,12 +400,16 @@ exports.completeProductionRun = async (req, res) => {
       let remainingQuantity = requiredQuantity;
       const materialsUsed = [];
 
-      // Deduct from batches using FIFO
+      // Deduct from batches using FIFO with cost tracking
       for (const batch of batches) {
         if (remainingQuantity <= 0) break;
 
         const availableInBatch = parseFloat(batch.current_quantity);
         const quantityToDeduct = Math.min(remainingQuantity, availableInBatch);
+
+        // Calculate cost for this deduction
+        const costFromBatch = parseFloat(batch.unit_cost || 0) * quantityToDeduct;
+        totalMaterialCost += costFromBatch;
 
         // Update batch quantity
         await batch.update(
@@ -425,29 +447,88 @@ exports.completeProductionRun = async (req, res) => {
       }
     }
 
-    // Update product SKU stock
-    await productionRun.productSku.update(
+    // Calculate waste cost separately (Approach 2: Separate Waste Allocation)
+    const wasteQty = parseFloat(waste_quantity || 0);
+    const totalExpectedQuantity = parseFloat(quantity_produced) + wasteQty;
+
+    // Base unit cost (materials divided by expected total output including waste)
+    const baseUnitCost = totalExpectedQuantity > 0 ? totalMaterialCost / totalExpectedQuantity : 0;
+
+    // Allocate costs
+    const finishedGoodsCost = baseUnitCost * parseFloat(quantity_produced);
+    const wasteCost = baseUnitCost * wasteQty;
+
+    // Get target SKU (from recipe or from outputs)
+    const targetSkuId = outputs[0]?.sku_id || productionRun.recipe.product_sku_id;
+
+    if (!targetSkuId) {
+      await transaction.rollback();
+      return errorResponse(res, 'Product SKU is required for production output', 400);
+    }
+
+    const targetSku = await ProductSku.findByPk(targetSkuId, { transaction });
+
+    if (!targetSku) {
+      await transaction.rollback();
+      return errorResponse(res, 'Product SKU not found', 404);
+    }
+
+    // Generate finished goods batch number
+    const finishedGoodsBatchNumber = await generateFinishedGoodsBatchNumber(
+      targetSkuId,
+      productionRun.production_date
+    );
+
+    // Update SKU average cost (weighted average)
+    const currentStock = parseFloat(targetSku.current_stock || 0);
+    const currentAvgCost = parseFloat(targetSku.average_cost || 0);
+    const newQuantity = parseFloat(quantity_produced);
+    const newUnitCost = baseUnitCost; // Use base cost (not inflated by waste)
+
+    const totalValue = currentStock * currentAvgCost + newQuantity * newUnitCost;
+    const totalQuantity = currentStock + newQuantity;
+    const newAvgCost = totalQuantity > 0 ? totalValue / totalQuantity : newUnitCost;
+
+    // Update product SKU stock and average cost
+    await targetSku.update(
       {
-        current_stock:
-          parseFloat(productionRun.productSku.current_stock || 0) + parseFloat(quantity_produced),
+        current_stock: totalQuantity,
+        average_cost: newAvgCost.toFixed(2),
+        material_cost: newAvgCost.toFixed(2), // For now, same as average (overhead added in P8)
+        cost_last_updated: new Date(),
       },
       { transaction }
     );
 
-    // Create production output
+    // Create production output with batch number and cost
     await ProductionOutput.create(
       {
         production_run_id: id,
-        sku_id: outputs[0]?.sku_id || null,
+        sku_id: targetSkuId,
         quantity_produced,
+        batch_number: finishedGoodsBatchNumber,
+        production_date: productionRun.production_date,
+        unit_cost: baseUnitCost.toFixed(2), // Base cost per unit
+        total_cost: finishedGoodsCost.toFixed(2), // Cost for finished goods only
+        waste_cost: wasteCost.toFixed(2), // Waste cost tracked separately
       },
       { transaction }
     );
 
-    // Update production run status
+    // Calculate yield efficiency
+    const actualQuantity = parseFloat(quantity_produced);
+    const expectedQuantity = expectedYield * scaleFactor;
+    const yieldEfficiency = expectedQuantity > 0 ? (actualQuantity / expectedQuantity) * 100 : 0;
+
+    // Update production run status with yield tracking
     await productionRun.update(
       {
         status: 'completed',
+        expected_quantity: expectedQuantity.toFixed(2),
+        actual_quantity: actualQuantity.toFixed(2),
+        waste_quantity: wasteQty.toFixed(2),
+        waste_reason: waste_reason || null,
+        yield_efficiency: yieldEfficiency.toFixed(2),
       },
       { transaction }
     );
@@ -460,7 +541,7 @@ exports.completeProductionRun = async (req, res) => {
         {
           model: Recipe,
           as: 'recipe',
-          attributes: ['id', 'name', 'version'],
+          attributes: ['id', 'name', 'version', 'expected_yield'],
         },
         {
           model: db.User,
@@ -474,7 +555,7 @@ exports.completeProductionRun = async (req, res) => {
             {
               model: RawMaterialBatch,
               as: 'batch',
-              attributes: ['id', 'batch_number', 'expiry_date'],
+              attributes: ['id', 'batch_number', 'expiry_date', 'unit_cost'],
             },
           ],
         },
@@ -485,13 +566,9 @@ exports.completeProductionRun = async (req, res) => {
             {
               model: ProductSku,
               as: 'sku',
-              attributes: ['id', 'size', 'unit', 'price'],
+              attributes: ['id', 'size', 'unit', 'price', 'average_cost'],
             },
           ],
-        },
-        {
-          model: ProductionOutput,
-          as: 'outputs',
         },
       ],
     });
@@ -595,5 +672,156 @@ exports.checkMaterialAvailability = async (req, res) => {
   } catch (error) {
     console.error('Error checking material availability:', error);
     return errorResponse(res, 'Failed to check material availability', 500);
+  }
+};
+
+/**
+ * Get waste cost report
+ * GET /api/production-runs/waste-cost-report
+ */
+exports.getWasteCostReport = async (req, res) => {
+  try {
+    const { date_from, date_to } = req.query;
+
+    const where = {};
+
+    if (date_from) {
+      where.production_date = {
+        ...where.production_date,
+        [Op.gte]: new Date(date_from),
+      };
+    }
+    if (date_to) {
+      where.production_date = {
+        ...where.production_date,
+        [Op.lte]: new Date(date_to),
+      };
+    }
+
+    const outputs = await ProductionOutput.findAll({
+      where,
+      include: [
+        {
+          model: ProductionRun,
+          as: 'productionRun',
+          attributes: ['id', 'batch_number', 'production_date', 'waste_quantity', 'waste_reason'],
+        },
+        {
+          model: ProductSku,
+          as: 'sku',
+          include: [
+            {
+              model: Product,
+              as: 'product',
+              attributes: ['code', 'name'],
+            },
+          ],
+        },
+      ],
+      order: [['production_date', 'DESC']],
+    });
+
+    const wasteDetails = outputs
+      .filter(output => parseFloat(output.waste_cost || 0) > 0)
+      .map(output => ({
+        date: output.production_date,
+        batch_number: output.productionRun.batch_number,
+        product: output.sku.product.name,
+        waste_quantity: parseFloat(output.productionRun.waste_quantity || 0),
+        waste_cost: parseFloat(output.waste_cost || 0),
+        waste_reason: output.productionRun.waste_reason || 'Not specified',
+      }));
+
+    const totalWasteCost = wasteDetails.reduce((sum, item) => sum + item.waste_cost, 0);
+
+    return successResponse(res, {
+      summary: {
+        total_waste_cost: totalWasteCost.toFixed(2),
+        total_incidents: wasteDetails.length,
+        period: {
+          from: date_from || 'All time',
+          to: date_to || 'Now',
+        },
+      },
+      details: wasteDetails,
+    });
+  } catch (error) {
+    console.error('Error generating waste cost report:', error);
+    return errorResponse(res, 'Failed to generate waste cost report', 500);
+  }
+};
+
+/**
+ * Get production efficiency report
+ * GET /api/production-runs/efficiency-report
+ */
+exports.getEfficiencyReport = async (req, res) => {
+  try {
+    const { date_from, date_to, recipe_id } = req.query;
+
+    const where = { status: 'completed' };
+
+    if (date_from) {
+      where.production_date = {
+        ...where.production_date,
+        [Op.gte]: new Date(date_from),
+      };
+    }
+    if (date_to) {
+      where.production_date = {
+        ...where.production_date,
+        [Op.lte]: new Date(date_to),
+      };
+    }
+    if (recipe_id) {
+      where.recipe_id = recipe_id;
+    }
+
+    const runs = await ProductionRun.findAll({
+      where,
+      include: [
+        {
+          model: Recipe,
+          as: 'recipe',
+          attributes: ['id', 'code', 'name'],
+        },
+      ],
+      order: [['production_date', 'DESC']],
+    });
+
+    const report = runs.map(run => ({
+      production_run_id: run.id,
+      batch_number: run.batch_number,
+      production_date: run.production_date,
+      recipe_name: run.recipe.name,
+      expected_quantity: parseFloat(run.expected_quantity || 0).toFixed(2),
+      actual_quantity: parseFloat(run.actual_quantity || 0).toFixed(2),
+      waste_quantity: parseFloat(run.waste_quantity || 0).toFixed(2),
+      waste_reason: run.waste_reason || 'N/A',
+      yield_efficiency: parseFloat(run.yield_efficiency || 0).toFixed(2),
+      variance: (
+        parseFloat(run.actual_quantity || 0) - parseFloat(run.expected_quantity || 0)
+      ).toFixed(2),
+    }));
+
+    // Calculate summary
+    const summary = {
+      total_runs: report.length,
+      average_efficiency:
+        report.length > 0
+          ? (
+              report.reduce((sum, r) => sum + parseFloat(r.yield_efficiency), 0) / report.length
+            ).toFixed(2)
+          : '0.00',
+      total_waste: report.reduce((sum, r) => sum + parseFloat(r.waste_quantity), 0).toFixed(2),
+    };
+
+    return successResponse(res, {
+      summary,
+      details: report,
+    });
+  } catch (error) {
+    console.error('Error generating efficiency report:', error);
+    return errorResponse(res, 'Failed to generate efficiency report', 500);
   }
 };

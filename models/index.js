@@ -67,14 +67,6 @@ db.RawMaterialBatch.hasMany(db.ProductionMaterial, {
   as: 'productionMaterials',
 });
 
-// Product associations
-db.Product.hasMany(db.ProductSku, { foreignKey: 'product_id', as: 'skus' });
-
-// ProductSku associations
-db.ProductSku.belongsTo(db.Product, { foreignKey: 'product_id', as: 'product' });
-db.ProductSku.hasMany(db.InvoiceItem, { foreignKey: 'sku_id', as: 'invoiceItems' });
-db.ProductSku.hasMany(db.ProductionOutput, { foreignKey: 'sku_id', as: 'productionOutputs' });
-
 // Employee associations
 db.Employee.belongsTo(db.Route, { foreignKey: 'assigned_route_id', as: 'assignedRoute' });
 db.Employee.hasMany(db.SalesInvoice, { foreignKey: 'sales_ref_id', as: 'salesInvoices' });
@@ -100,10 +92,22 @@ db.RouteVehicleHistory.belongsTo(db.Vehicle, { foreignKey: 'vehicle_id', as: 've
 // Recipe associations
 db.Recipe.hasMany(db.RecipeItem, { foreignKey: 'recipe_id', as: 'items' });
 db.Recipe.hasMany(db.ProductionRun, { foreignKey: 'recipe_id', as: 'productionRuns' });
+db.Recipe.belongsTo(db.Product, { foreignKey: 'product_id', as: 'product' });
+db.Recipe.belongsTo(db.ProductSku, { foreignKey: 'product_sku_id', as: 'productSku' });
 
 // RecipeItem associations
 db.RecipeItem.belongsTo(db.Recipe, { foreignKey: 'recipe_id', as: 'recipe' });
 db.RecipeItem.belongsTo(db.RawMaterial, { foreignKey: 'material_id', as: 'material' });
+
+// Product associations
+db.Product.hasMany(db.ProductSku, { foreignKey: 'product_id', as: 'skus' });
+db.Product.hasMany(db.Recipe, { foreignKey: 'product_id', as: 'recipes' });
+
+// ProductSku associations
+db.ProductSku.belongsTo(db.Product, { foreignKey: 'product_id', as: 'product' });
+db.ProductSku.hasMany(db.InvoiceItem, { foreignKey: 'sku_id', as: 'invoiceItems' });
+db.ProductSku.hasMany(db.ProductionOutput, { foreignKey: 'sku_id', as: 'productionOutputs' });
+db.ProductSku.hasMany(db.Recipe, { foreignKey: 'product_sku_id', as: 'recipes' });
 
 // ProductionRun associations
 db.ProductionRun.belongsTo(db.Recipe, { foreignKey: 'recipe_id', as: 'recipe' });

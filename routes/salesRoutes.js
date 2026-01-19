@@ -25,4 +25,8 @@ router.delete('/:id', roleCheck(['admin']), salesController.deleteInvoice);
 // Get invoice PDF (future)
 router.get('/:id/pdf', salesController.getInvoicePDF);
 
+// Profit routes
+router.get('/invoices/:invoiceId/profit', salesController.getSaleProfit);
+router.get('/profit-summary', salesController.getDailyMonthlyProfitSummary);
+
 module.exports = router;

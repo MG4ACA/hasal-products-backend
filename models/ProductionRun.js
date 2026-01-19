@@ -38,6 +38,32 @@ module.exports = (sequelize, DataTypes) => {
       notes: {
         type: DataTypes.TEXT,
       },
+      expected_quantity: {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: true,
+        comment: 'Expected output quantity based on recipe',
+      },
+      actual_quantity: {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: true,
+        comment: 'Actual output quantity produced',
+      },
+      waste_quantity: {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: true,
+        defaultValue: 0,
+        comment: 'Waste/loss quantity',
+      },
+      waste_reason: {
+        type: DataTypes.STRING(200),
+        allowNull: true,
+        comment: 'Reason for waste/loss',
+      },
+      yield_efficiency: {
+        type: DataTypes.DECIMAL(5, 2),
+        allowNull: true,
+        comment: 'Yield efficiency % (actual/expected * 100)',
+      },
     },
     {
       tableName: 'production_runs',

@@ -15,6 +15,22 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.STRING(100),
         allowNull: false,
       },
+      product_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+          model: 'products',
+          key: 'id',
+        },
+      },
+      product_sku_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+          model: 'product_skus',
+          key: 'id',
+        },
+      },
       version: {
         type: DataTypes.INTEGER,
         defaultValue: 1,
@@ -42,6 +58,8 @@ module.exports = (sequelize, DataTypes) => {
         { fields: ['code'] },
         { fields: ['is_active'] },
         { fields: ['code', 'version'], unique: true },
+        { fields: ['product_id'] },
+        { fields: ['product_sku_id'] },
       ],
     }
   );

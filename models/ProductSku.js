@@ -30,6 +30,29 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.DECIMAL(10, 2),
         allowNull: false,
       },
+      average_cost: {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: true,
+        defaultValue: 0,
+        comment: 'Average production cost per unit (weighted average)',
+      },
+      material_cost: {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: true,
+        defaultValue: 0,
+        comment: 'Material cost only (before overhead allocation)',
+      },
+      overhead_cost: {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: true,
+        defaultValue: 0,
+        comment: 'Allocated overhead per unit',
+      },
+      cost_last_updated: {
+        type: DataTypes.DATE,
+        allowNull: true,
+        comment: 'Last cost update timestamp',
+      },
       current_stock: {
         type: DataTypes.DECIMAL(10, 2),
         defaultValue: 0,

@@ -461,3 +461,210 @@ exports.getInvoicePDF = async (req, res) => {
     return errorResponse(res, 'Failed to generate PDF', 500);
   }
 };
+
+/**
+ * Get profit per sale (from sales invoices)
+ * GET /api/sales/invoices/:invoiceId/profit
+ */
+exports.getSaleProfit = async (req, res) => {
+  try {
+    const { invoiceId } = req.params;
+
+    const invoice = await SalesInvoice.findByPk(invoiceId, {
+      include: [
+        {
+          model: InvoiceItem,
+          as: 'items',
+          include: [
+            {
+              model: ProductSku,
+              as: 'sku',
+              attributes: ['id', 'size', 'unit', 'average_cost'],
+              include: [
+                {
+                  model: Product,
+                  as: 'product',
+                  attributes: ['code', 'name'],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    if (!invoice) {
+      return errorResponse(res, 'Invoice not found', 404);
+    }
+
+    const itemProfits = invoice.items.map(item => {
+      const unitPrice = parseFloat(item.price || 0);
+      const unitCost = parseFloat(item.sku.average_cost || 0);
+      const quantity = parseFloat(item.quantity || 0);
+
+      const revenue = unitPrice * quantity;
+      const cost = unitCost * quantity;
+      const profit = revenue - cost;
+      const margin = revenue > 0 ? (profit / revenue) * 100 : 0;
+
+      return {
+        product: item.sku.product.name,
+        sku: `${item.sku.size} ${item.sku.unit}`,
+        quantity: quantity,
+        unit_price: unitPrice.toFixed(2),
+        unit_cost: unitCost.toFixed(2),
+        revenue: revenue.toFixed(2),
+        cost: cost.toFixed(2),
+        profit: profit.toFixed(2),
+        margin: margin.toFixed(2),
+      };
+    });
+
+    const totalRevenue = itemProfits.reduce((sum, item) => sum + parseFloat(item.revenue), 0);
+    const totalCost = itemProfits.reduce((sum, item) => sum + parseFloat(item.cost), 0);
+    const totalProfit = totalRevenue - totalCost;
+    const overallMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
+
+    return successResponse(res, {
+      invoice_number: invoice.invoice_number,
+      invoice_date: invoice.invoice_date,
+      summary: {
+        total_revenue: totalRevenue.toFixed(2),
+        total_cost: totalCost.toFixed(2),
+        total_profit: totalProfit.toFixed(2),
+        profit_margin: overallMargin.toFixed(2),
+      },
+      items: itemProfits,
+    });
+  } catch (error) {
+    console.error('Error calculating sale profit:', error);
+    return errorResponse(res, 'Failed to calculate sale profit', 500);
+  }
+};
+
+/**
+ * Get daily/monthly profit summary
+ * GET /api/sales/profit-summary?period=daily&date_from=2026-01-01&date_to=2026-01-31
+ */
+exports.getDailyMonthlyProfitSummary = async (req, res) => {
+  try {
+    const { period = 'daily', date_from, date_to } = req.query;
+
+    const where = {};
+
+    if (date_from) {
+      where.invoice_date = {
+        ...where.invoice_date,
+        [Op.gte]: new Date(date_from),
+      };
+    }
+    if (date_to) {
+      where.invoice_date = {
+        ...where.invoice_date,
+        [Op.lte]: new Date(date_to),
+      };
+    }
+
+    const invoices = await SalesInvoice.findAll({
+      where,
+      include: [
+        {
+          model: InvoiceItem,
+          as: 'items',
+          include: [
+            {
+              model: ProductSku,
+              as: 'sku',
+              attributes: ['average_cost'],
+            },
+          ],
+        },
+      ],
+      order: [['invoice_date', 'ASC']],
+    });
+
+    // Group by period
+    const profitByPeriod = {};
+
+    invoices.forEach(invoice => {
+      const date = new Date(invoice.invoice_date);
+      let periodKey;
+
+      if (period === 'daily') {
+        periodKey = date.toISOString().slice(0, 10); // YYYY-MM-DD
+      } else {
+        periodKey = date.toISOString().slice(0, 7); // YYYY-MM
+      }
+
+      if (!profitByPeriod[periodKey]) {
+        profitByPeriod[periodKey] = {
+          revenue: 0,
+          cost: 0,
+          profit: 0,
+          invoice_count: 0,
+        };
+      }
+
+      let invoiceRevenue = 0;
+      let invoiceCost = 0;
+
+      invoice.items.forEach(item => {
+        const quantity = parseFloat(item.quantity || 0);
+        const price = parseFloat(item.price || 0);
+        const cost = parseFloat(item.sku.average_cost || 0);
+
+        invoiceRevenue += quantity * price;
+        invoiceCost += quantity * cost;
+      });
+
+      profitByPeriod[periodKey].revenue += invoiceRevenue;
+      profitByPeriod[periodKey].cost += invoiceCost;
+      profitByPeriod[periodKey].profit += invoiceRevenue - invoiceCost;
+      profitByPeriod[periodKey].invoice_count += 1;
+    });
+
+    // Format results
+    const summary = Object.keys(profitByPeriod)
+      .sort()
+      .map(periodKey => {
+        const data = profitByPeriod[periodKey];
+        const margin = data.revenue > 0 ? (data.profit / data.revenue) * 100 : 0;
+
+        return {
+          period: periodKey,
+          revenue: data.revenue.toFixed(2),
+          cost: data.cost.toFixed(2),
+          profit: data.profit.toFixed(2),
+          margin: margin.toFixed(2),
+          invoice_count: data.invoice_count,
+        };
+      });
+
+    const totals = summary.reduce(
+      (acc, item) => ({
+        revenue: acc.revenue + parseFloat(item.revenue),
+        cost: acc.cost + parseFloat(item.cost),
+        profit: acc.profit + parseFloat(item.profit),
+        invoices: acc.invoices + item.invoice_count,
+      }),
+      { revenue: 0, cost: 0, profit: 0, invoices: 0 }
+    );
+
+    const overallMargin = totals.revenue > 0 ? (totals.profit / totals.revenue) * 100 : 0;
+
+    return successResponse(res, {
+      period_type: period,
+      totals: {
+        total_revenue: totals.revenue.toFixed(2),
+        total_cost: totals.cost.toFixed(2),
+        total_profit: totals.profit.toFixed(2),
+        overall_margin: overallMargin.toFixed(2),
+        total_invoices: totals.invoices,
+      },
+      breakdown: summary,
+    });
+  } catch (error) {
+    console.error('Error generating profit summary:', error);
+    return errorResponse(res, 'Failed to generate profit summary', 500);
+  }
+};
