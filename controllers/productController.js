@@ -97,17 +97,28 @@ exports.createProduct = async (req, res) => {
       return errorResponse(res, 'Product name is required', 400);
     }
 
-    // Generate product code
-    const lastProduct = await Product.findOne({
+    // Generate product code - find the highest number in existing codes
+    const allProducts = await Product.findAll({
+      attributes: ['code'],
       order: [['id', 'DESC']],
+      limit: 100, // Check last 100 products
     });
 
-    let productCode = 'PROD001';
-    if (lastProduct && lastProduct.code) {
-      const lastNumber = parseInt(lastProduct.code.replace('PROD', ''));
-      const nextNumber = lastNumber + 1;
-      productCode = `PROD${String(nextNumber).padStart(3, '0')}`;
-    }
+    let maxNumber = 0;
+    allProducts.forEach(product => {
+      if (product.code) {
+        const codeMatch = product.code.match(/(\d+)$/);
+        if (codeMatch) {
+          const num = parseInt(codeMatch[1], 10);
+          if (!isNaN(num) && num > maxNumber) {
+            maxNumber = num;
+          }
+        }
+      }
+    });
+
+    const nextNumber = maxNumber + 1;
+    const productCode = `PROD${String(nextNumber).padStart(3, '0')}`;
 
     // Create product
     const product = await Product.create({
