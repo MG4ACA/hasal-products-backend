@@ -8,7 +8,8 @@
     "dev": "nodemon server.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "db:init": "node scripts/initializeDatabase.js",
-    "db:seed": "node scripts/seed.js"
+    "db:seed": "node scripts/seed.js",
+    "test:seed": "node scripts/seed-test-data.js"
   },
   "keywords": [
     "pos",
