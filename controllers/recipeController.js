@@ -4,12 +4,35 @@ const { Op } = require('sequelize');
 const db = require('../models');
 
 /**
+ * Calculate weighted average cost for a material from receipt batches only
+ * @param {number} materialId - Raw material ID
+ * @returns {Promise<number>} Average cost or 0 if no receipt batches
+ */
+const calculateAverageCost = async materialId => {
+  try {
+    const costResult = await db.sequelize.query(
+      `SELECT SUM(quantity * unit_cost) / SUM(quantity) as avg_cost
+       FROM raw_material_batches
+       WHERE material_id = ? AND batch_type = 'receipt'`,
+      {
+        replacements: [materialId],
+        type: db.sequelize.QueryTypes.SELECT,
+      }
+    );
+    return parseFloat(costResult[0]?.avg_cost || 0);
+  } catch (error) {
+    console.error('Error calculating average cost:', error);
+    return 0;
+  }
+};
+
+/**
  * Get all recipes with pagination and search
  * GET /api/recipes
  */
 exports.getAllRecipes = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search = '', is_active = '' } = req.query;
+    const { page = 1, limit = 10, search = '', is_active = '', product_id = '' } = req.query;
     const offset = (page - 1) * limit;
 
     const where = {};
@@ -23,9 +46,21 @@ exports.getAllRecipes = async (req, res) => {
       ];
     }
 
-    // Active status filter
+    // Active status filter - convert 'active'/'inactive' strings to boolean
     if (is_active !== '') {
-      where.is_active = is_active === 'true' || is_active === '1';
+      if (is_active === 'active') {
+        where.is_active = true;
+      } else if (is_active === 'inactive') {
+        where.is_active = false;
+      } else {
+        // Also support 'true'/'false' and '1'/'0' for backwards compatibility
+        where.is_active = is_active === 'true' || is_active === '1';
+      }
+    }
+
+    // Product filter
+    if (product_id !== '') {
+      where.product_id = parseInt(product_id);
     }
 
     const { count, rows } = await Recipe.findAndCountAll({
@@ -113,14 +148,31 @@ exports.getRecipeById = async (req, res) => {
       return errorResponse(res, 'Recipe not found', 404);
     }
 
-    // Calculate total cost
-    const totalCost = recipe.items.reduce((sum, item) => {
-      const cost = parseFloat(item.material.cost || 0) * parseFloat(item.quantity || 0);
-      return sum + cost;
-    }, 0);
+    // Add average_cost for each material in the BOM and calculate costs
+    let totalCost = 0;
+    const itemsWithCosts = [];
+
+    if (recipe.items && recipe.items.length > 0) {
+      for (const item of recipe.items) {
+        const averageCost = item.material ? await calculateAverageCost(item.material.id) : 0;
+        const itemCost = parseFloat(averageCost || 0) * parseFloat(item.quantity || 0);
+        totalCost += itemCost;
+
+        itemsWithCosts.push({
+          ...item.toJSON(),
+          material: item.material
+            ? {
+                ...item.material.toJSON(),
+                average_cost: averageCost,
+              }
+            : null,
+        });
+      }
+    }
 
     const recipeData = {
       ...recipe.toJSON(),
+      items: itemsWithCosts,
       total_cost: totalCost.toFixed(2),
       cost_per_unit:
         recipe.expected_yield > 0 ? (totalCost / recipe.expected_yield).toFixed(2) : '0.00',
@@ -142,7 +194,6 @@ exports.createRecipe = async (req, res) => {
 
   try {
     const {
-      code,
       name,
       expected_yield,
       yield_unit,
@@ -153,11 +204,6 @@ exports.createRecipe = async (req, res) => {
     } = req.body;
 
     // Validation
-    if (!code) {
-      await transaction.rollback();
-      return errorResponse(res, 'Recipe code is required', 400);
-    }
-
     if (!name) {
       await transaction.rollback();
       return errorResponse(res, 'Recipe name is required', 400);
@@ -203,20 +249,34 @@ exports.createRecipe = async (req, res) => {
       return errorResponse(res, 'Yield unit is required', 400);
     }
 
-    // Check if recipe code already exists
-    const existingRecipe = await Recipe.findOne({
-      where: { code },
+    // Generate recipe code - find the highest number in existing codes
+    const allRecipes = await Recipe.findAll({
+      attributes: ['code'],
+      order: [['id', 'DESC']],
+      limit: 100, // Check last 100 recipes
+      transaction,
     });
 
-    if (existingRecipe) {
-      await transaction.rollback();
-      return errorResponse(res, 'Recipe code already exists', 400);
-    }
+    let maxNumber = 0;
+    allRecipes.forEach(recipe => {
+      if (recipe.code) {
+        const codeMatch = recipe.code.match(/(\d+)$/);
+        if (codeMatch) {
+          const num = parseInt(codeMatch[1], 10);
+          if (!isNaN(num) && num > maxNumber) {
+            maxNumber = num;
+          }
+        }
+      }
+    });
+
+    const nextNumber = maxNumber + 1;
+    const generatedCode = `RECIPE${String(nextNumber).padStart(3, '0')}`;
 
     // Create recipe with version 1
     const recipe = await Recipe.create(
       {
-        code,
+        code: generatedCode,
         name,
         product_id,
         product_sku_id,
@@ -321,6 +381,8 @@ exports.updateRecipe = async (req, res) => {
       {
         code: currentRecipe.code,
         name: name || currentRecipe.name,
+        product_id: currentRecipe.product_id,
+        product_sku_id: currentRecipe.product_sku_id,
         version: newVersion,
         expected_yield: expected_yield || currentRecipe.expected_yield,
         yield_unit: yield_unit || currentRecipe.yield_unit,
@@ -359,7 +421,7 @@ exports.updateRecipe = async (req, res) => {
 
     await transaction.commit();
 
-    // Fetch created recipe with items
+    // Fetch created recipe with items and calculate costs
     const updatedRecipe = await Recipe.findByPk(newRecipe.id, {
       include: [
         {
@@ -376,7 +438,11 @@ exports.updateRecipe = async (req, res) => {
       ],
     });
 
-    return successResponse(res, updatedRecipe);
+    const recipeData = {
+      ...updatedRecipe.toJSON(),
+    };
+
+    return successResponse(res, recipeData);
   } catch (error) {
     await transaction.rollback();
     console.error('Error updating recipe:', error);
@@ -438,7 +504,7 @@ exports.getRecipeVersions = async (req, res) => {
             {
               model: RawMaterial,
               as: 'material',
-              attributes: ['id', 'code', 'name'],
+              attributes: ['id', 'code', 'name', 'unit'],
             },
           ],
         },

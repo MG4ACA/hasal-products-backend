@@ -2,6 +2,30 @@ const { RawMaterial, RawMaterialBatch, sequelize } = require('../models');
 const { successResponse, errorResponse } = require('../utils/response');
 const { Op } = require('sequelize');
 
+/**
+ * Calculate weighted average cost for a material from receipt batches only
+ * Formula: SUM(quantity * unit_cost) / SUM(quantity)
+ * @param {number} materialId - Raw material ID
+ * @returns {Promise<number>} Average cost or 0 if no receipt batches
+ */
+const calculateAverageCost = async materialId => {
+  try {
+    const costResult = await sequelize.query(
+      `SELECT SUM(quantity * unit_cost) / SUM(quantity) as avg_cost
+       FROM raw_material_batches
+       WHERE material_id = ? AND batch_type = 'receipt'`,
+      {
+        replacements: [materialId],
+        type: sequelize.QueryTypes.SELECT,
+      }
+    );
+    return parseFloat(costResult[0]?.avg_cost || 0);
+  } catch (error) {
+    console.error('Error calculating average cost:', error);
+    return 0;
+  }
+};
+
 // Generate unique raw material code
 const generateRawMaterialCode = async () => {
   const lastMaterial = await RawMaterial.findOne({
@@ -58,7 +82,7 @@ exports.getAllRawMaterials = async (req, res) => {
       order: [[sortBy, sortOrder]],
     });
 
-    // Calculate current stock for each material
+    // Calculate current stock and average cost for each material
     const materialsWithStock = await Promise.all(
       rows.map(async material => {
         const stockResult = await RawMaterialBatch.findOne({
@@ -67,10 +91,12 @@ exports.getAllRawMaterials = async (req, res) => {
         });
 
         const totalStock = parseFloat(stockResult?.dataValues?.total_stock || 0);
+        const averageCost = await calculateAverageCost(material.id);
 
         return {
           ...material.toJSON(),
           current_stock: totalStock,
+          average_cost: averageCost,
         };
       })
     );
@@ -136,21 +162,7 @@ exports.getRawMaterialById = async (req, res) => {
     });
 
     const totalStock = parseFloat(stockResult?.dataValues?.total_stock || 0);
-
-    // Calculate weighted average cost from all batches
-    let averageCost = 0;
-    if (totalStock > 0) {
-      const costResult = await sequelize.query(
-        `SELECT SUM(quantity * unit_cost) / SUM(quantity) as avg_cost
-         FROM raw_material_batches
-         WHERE material_id = ? AND batch_type = 'receipt'`,
-        {
-          replacements: [id],
-          type: sequelize.QueryTypes.SELECT,
-        }
-      );
-      averageCost = parseFloat(costResult[0]?.avg_cost || 0);
-    }
+    const averageCost = await calculateAverageCost(id);
 
     return successResponse(res, {
       raw_material: {
