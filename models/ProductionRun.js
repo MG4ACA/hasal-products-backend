@@ -32,8 +32,8 @@ module.exports = (sequelize, DataTypes) => {
         },
       },
       status: {
-        type: DataTypes.ENUM('completed', 'cancelled'),
-        defaultValue: 'completed',
+        type: DataTypes.ENUM('planned', 'in_progress', 'completed', 'cancelled'),
+        defaultValue: 'planned',
       },
       notes: {
         type: DataTypes.TEXT,

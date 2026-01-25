@@ -64,7 +64,21 @@ exports.getAllProductionRuns = async (req, res) => {
         {
           model: Recipe,
           as: 'recipe',
-          attributes: ['id', 'name', 'version'],
+          attributes: ['id', 'name', 'version', 'expected_yield', 'yield_unit', 'product_sku_id'],
+          include: [
+            {
+              model: ProductSku,
+              as: 'productSku',
+              attributes: ['id', 'size', 'unit'],
+              include: [
+                {
+                  model: Product,
+                  as: 'product',
+                  attributes: ['id', 'code', 'name'],
+                },
+              ],
+            },
+          ],
         },
         {
           model: db.User,
@@ -102,7 +116,7 @@ exports.getProductionRunById = async (req, res) => {
         {
           model: Recipe,
           as: 'recipe',
-          attributes: ['id', 'name', 'version', 'batch_size', 'unit'],
+          attributes: ['id', 'name', 'version', 'expected_yield', 'yield_unit'],
         },
         {
           model: db.User,
@@ -170,13 +184,18 @@ exports.createProductionRun = async (req, res) => {
       production_date,
       batch_number,
       produced_by,
+      expected_quantity,
       notes,
-      status = 'completed',
+      status = 'planned',
     } = req.body;
 
     // Validation
-    if (!recipe_id || !batch_number || !produced_by) {
-      return errorResponse(res, 'Recipe ID, batch number, and produced_by user are required', 400);
+    if (!recipe_id || !produced_by) {
+      return errorResponse(res, 'Recipe ID and produced_by user are required', 400);
+    }
+
+    if (!expected_quantity || expected_quantity <= 0) {
+      return errorResponse(res, 'Expected quantity is required and must be greater than 0', 400);
     }
 
     // Verify recipe exists
@@ -186,12 +205,20 @@ exports.createProductionRun = async (req, res) => {
       return errorResponse(res, 'Recipe not found', 404);
     }
 
+    // Auto-generate batch number if not provided
+    const { generateProductionBatchNumber } = require('../utils/batchNumberGenerator');
+    let finalBatchNumber = batch_number;
+    if (!finalBatchNumber) {
+      finalBatchNumber = await generateProductionBatchNumber(production_date || new Date());
+    }
+
     // Create production run
     const productionRun = await ProductionRun.create({
       recipe_id,
       production_date: production_date || new Date(),
-      batch_number,
+      batch_number: finalBatchNumber,
       produced_by,
+      expected_quantity,
       notes,
       status,
     });
@@ -202,7 +229,7 @@ exports.createProductionRun = async (req, res) => {
         {
           model: Recipe,
           as: 'recipe',
-          attributes: ['id', 'name', 'version', 'batch_size'],
+          attributes: ['id', 'name', 'version', 'expected_yield', 'yield_unit'],
         },
         {
           model: db.User,
@@ -226,7 +253,7 @@ exports.createProductionRun = async (req, res) => {
 exports.updateProductionRun = async (req, res) => {
   try {
     const { id } = req.params;
-    const { production_date, quantity_to_produce, notes, status } = req.body;
+    const { production_date, expected_quantity, notes, status } = req.body;
 
     const productionRun = await ProductionRun.findByPk(id);
 
@@ -239,9 +266,19 @@ exports.updateProductionRun = async (req, res) => {
       return errorResponse(res, 'Cannot update completed production run', 400);
     }
 
+    // Don't allow updates if in_progress (materials already deducted)
+    if (productionRun.status === 'in_progress') {
+      return errorResponse(res, 'Cannot update production run that is in progress', 400);
+    }
+
+    // Validate expected_quantity if provided
+    if (expected_quantity !== undefined && expected_quantity <= 0) {
+      return errorResponse(res, 'Expected quantity must be greater than 0', 400);
+    }
+
     await productionRun.update({
       production_date,
-      quantity_to_produce,
+      expected_quantity,
       notes,
       status,
     });
@@ -250,19 +287,28 @@ exports.updateProductionRun = async (req, res) => {
     const updatedRun = await ProductionRun.findByPk(id, {
       include: [
         {
-          model: Product,
-          as: 'product',
-          attributes: ['id', 'code', 'name'],
-        },
-        {
-          model: ProductSku,
-          as: 'productSku',
-          attributes: ['id', 'sku_code', 'variant'],
-        },
-        {
           model: Recipe,
           as: 'recipe',
-          attributes: ['id', 'name', 'version'],
+          attributes: ['id', 'name', 'version', 'expected_yield', 'yield_unit'],
+          include: [
+            {
+              model: ProductSku,
+              as: 'productSku',
+              attributes: ['id', 'size', 'unit'],
+              include: [
+                {
+                  model: Product,
+                  as: 'product',
+                  attributes: ['id', 'code', 'name'],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          model: db.User,
+          as: 'producedBy',
+          attributes: ['id', 'username'],
         },
       ],
     });
@@ -315,7 +361,176 @@ exports.deleteProductionRun = async (req, res) => {
 };
 
 /**
+ * Start production run - checks materials, deducts using FIFO, updates status to in_progress
+ * POST /api/production-runs/:id/start
+ */
+exports.startProductionRun = async (req, res) => {
+  const transaction = await db.sequelize.transaction();
+
+  try {
+    const { id } = req.params;
+
+    const productionRun = await ProductionRun.findByPk(id, {
+      include: [
+        {
+          model: Recipe,
+          as: 'recipe',
+          include: [
+            {
+              model: RecipeItem,
+              as: 'items',
+              include: [
+                {
+                  model: RawMaterial,
+                  as: 'material',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    if (!productionRun) {
+      await transaction.rollback();
+      return errorResponse(res, 'Production run not found', 404);
+    }
+
+    if (productionRun.status !== 'planned') {
+      await transaction.rollback();
+      return errorResponse(res, 'Production run must be in planned status to start', 400);
+    }
+
+    if (!productionRun.expected_quantity || productionRun.expected_quantity <= 0) {
+      await transaction.rollback();
+      return errorResponse(res, 'Expected quantity is required to start production', 400);
+    }
+
+    // Calculate scaling factor based on expected quantity
+    const expectedYield = parseFloat(productionRun.recipe.expected_yield);
+    const expectedQuantity = parseFloat(productionRun.expected_quantity);
+    const scaleFactor = expectedQuantity / expectedYield;
+
+    // Track total material cost
+    let totalMaterialCost = 0;
+
+    // Process each recipe item with FIFO logic and cost tracking
+    for (const item of productionRun.recipe.items) {
+      const requiredQuantity = parseFloat(item.quantity) * scaleFactor;
+
+      // Get available batches (FIFO: oldest first, exclude expired and disposed returns)
+      const batches = await RawMaterialBatch.findAll({
+        where: {
+          material_id: item.material_id,
+          quantity: { [Op.gt]: 0 },
+          batch_type: 'receipt', // Only use receipt batches
+          expiry_date: { [Op.or]: [null, { [Op.gt]: new Date() }] },
+        },
+        order: [['created_at', 'ASC']], // FIFO: oldest first
+        transaction,
+      });
+
+      let remainingQuantity = requiredQuantity;
+      const materialsUsed = [];
+
+      // Deduct from batches using FIFO with cost tracking
+      for (const batch of batches) {
+        if (remainingQuantity <= 0) break;
+
+        const availableInBatch = parseFloat(batch.quantity);
+        const quantityToDeduct = Math.min(remainingQuantity, availableInBatch);
+
+        // Calculate cost for this deduction
+        const costFromBatch = parseFloat(batch.unit_cost || 0) * quantityToDeduct;
+        totalMaterialCost += costFromBatch;
+
+        // Update batch quantity
+        await batch.update(
+          {
+            quantity: parseFloat(batch.quantity) - quantityToDeduct,
+          },
+          { transaction }
+        );
+
+        // Record material usage
+        materialsUsed.push({
+          production_run_id: id,
+          batch_id: batch.id,
+          quantity_used: quantityToDeduct,
+        });
+
+        remainingQuantity -= quantityToDeduct;
+      }
+
+      // Check if we have enough materials
+      if (remainingQuantity > 0) {
+        await transaction.rollback();
+        return errorResponse(
+          res,
+          `Insufficient stock for ${item.material.name}. Required: ${requiredQuantity.toFixed(
+            2
+          )}, Available: ${(requiredQuantity - remainingQuantity).toFixed(2)}`,
+          400
+        );
+      }
+
+      // Bulk create production materials
+      if (materialsUsed.length > 0) {
+        await ProductionMaterial.bulkCreate(materialsUsed, { transaction });
+      }
+    }
+
+    // Update production run status to in_progress
+    await productionRun.update(
+      {
+        status: 'in_progress',
+      },
+      { transaction }
+    );
+
+    await transaction.commit();
+
+    // Fetch updated production run
+    const startedRun = await ProductionRun.findByPk(id, {
+      include: [
+        {
+          model: Recipe,
+          as: 'recipe',
+          attributes: ['id', 'name', 'version', 'expected_yield'],
+        },
+        {
+          model: db.User,
+          as: 'producedBy',
+          attributes: ['id', 'username'],
+        },
+        {
+          model: ProductionMaterial,
+          as: 'materials',
+          include: [
+            {
+              model: RawMaterialBatch,
+              as: 'batch',
+              attributes: ['id', 'batch_number', 'expiry_date', 'unit_cost'],
+            },
+          ],
+        },
+      ],
+    });
+
+    return successResponse(res, startedRun);
+  } catch (error) {
+    await transaction.rollback();
+    console.error('Error starting production run:', error);
+    return errorResponse(res, 'Failed to start production run', 500);
+  }
+};
+
+/**
  * Complete production run with FIFO batch consumption, cost tracking, and waste allocation
+ * POST /api/production-runs/:id/complete
+ */
+/**
+ * Complete production run - creates finished goods output (materials already deducted at start)
  * POST /api/production-runs/:id/complete
  */
 exports.completeProductionRun = async (req, res) => {
@@ -337,16 +552,6 @@ exports.completeProductionRun = async (req, res) => {
           as: 'recipe',
           include: [
             {
-              model: RecipeItem,
-              as: 'items',
-              include: [
-                {
-                  model: RawMaterial,
-                  as: 'material',
-                },
-              ],
-            },
-            {
               model: ProductSku,
               as: 'productSku',
               attributes: [
@@ -358,6 +563,17 @@ exports.completeProductionRun = async (req, res) => {
                 'average_cost',
                 'product_id',
               ],
+            },
+          ],
+        },
+        {
+          model: ProductionMaterial,
+          as: 'materials',
+          include: [
+            {
+              model: RawMaterialBatch,
+              as: 'batch',
+              attributes: ['id', 'batch_number', 'unit_cost'],
             },
           ],
         },
@@ -374,76 +590,18 @@ exports.completeProductionRun = async (req, res) => {
       return errorResponse(res, 'Production run already completed', 400);
     }
 
-    // Calculate scaling factor based on expected yield
-    const expectedYield = parseFloat(productionRun.recipe.expected_yield);
-    const scaleFactor = quantity_produced / expectedYield;
+    if (productionRun.status !== 'in_progress') {
+      await transaction.rollback();
+      return errorResponse(res, 'Production run must be in progress to complete', 400);
+    }
 
-    // Track total material cost
+    // Calculate total material cost from already deducted materials
     let totalMaterialCost = 0;
-
-    // Process each recipe item with FIFO logic and cost tracking
-    for (const item of productionRun.recipe.items) {
-      const requiredQuantity = parseFloat(item.quantity) * scaleFactor;
-
-      // Get available batches (FIFO: oldest first, exclude expired and disposed returns)
-      const batches = await RawMaterialBatch.findAll({
-        where: {
-          material_id: item.material_id,
-          current_quantity: { [Op.gt]: 0 },
-          type: 'receipt', // Only use receipt batches
-          expiry_date: { [Op.or]: [null, { [Op.gt]: new Date() }] },
-        },
-        order: [['created_at', 'ASC']], // FIFO: oldest first
-        transaction,
-      });
-
-      let remainingQuantity = requiredQuantity;
-      const materialsUsed = [];
-
-      // Deduct from batches using FIFO with cost tracking
-      for (const batch of batches) {
-        if (remainingQuantity <= 0) break;
-
-        const availableInBatch = parseFloat(batch.current_quantity);
-        const quantityToDeduct = Math.min(remainingQuantity, availableInBatch);
-
-        // Calculate cost for this deduction
-        const costFromBatch = parseFloat(batch.unit_cost || 0) * quantityToDeduct;
-        totalMaterialCost += costFromBatch;
-
-        // Update batch quantity
-        await batch.update(
-          {
-            current_quantity: parseFloat(batch.current_quantity) - quantityToDeduct,
-          },
-          { transaction }
-        );
-
-        // Record material usage
-        materialsUsed.push({
-          production_run_id: id,
-          batch_id: batch.id,
-          quantity_used: quantityToDeduct,
-        });
-
-        remainingQuantity -= quantityToDeduct;
-      }
-
-      // Check if we have enough materials
-      if (remainingQuantity > 0) {
-        await transaction.rollback();
-        return errorResponse(
-          res,
-          `Insufficient stock for ${item.material.name}. Required: ${requiredQuantity}, Available: ${
-            requiredQuantity - remainingQuantity
-          }`,
-          400
-        );
-      }
-
-      // Bulk create production materials
-      if (materialsUsed.length > 0) {
-        await ProductionMaterial.bulkCreate(materialsUsed, { transaction });
+    if (productionRun.materials && productionRun.materials.length > 0) {
+      for (const material of productionRun.materials) {
+        const quantityUsed = parseFloat(material.quantity_used || 0);
+        const unitCost = parseFloat(material.batch?.unit_cost || 0);
+        totalMaterialCost += quantityUsed * unitCost;
       }
     }
 
@@ -517,14 +675,13 @@ exports.completeProductionRun = async (req, res) => {
 
     // Calculate yield efficiency
     const actualQuantity = parseFloat(quantity_produced);
-    const expectedQuantity = expectedYield * scaleFactor;
+    const expectedQuantity = parseFloat(productionRun.expected_quantity || 0);
     const yieldEfficiency = expectedQuantity > 0 ? (actualQuantity / expectedQuantity) * 100 : 0;
 
     // Update production run status with yield tracking
     await productionRun.update(
       {
         status: 'completed',
-        expected_quantity: expectedQuantity.toFixed(2),
         actual_quantity: actualQuantity.toFixed(2),
         waste_quantity: wasteQty.toFixed(2),
         waste_reason: waste_reason || null,

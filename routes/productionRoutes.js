@@ -22,6 +22,13 @@ router.put(
 );
 router.delete('/:id', roleCheck(['admin']), productionController.deleteProductionRun);
 
+// Start production run
+router.post(
+  '/:id/start',
+  roleCheck(['admin', 'manager', 'production']),
+  productionController.startProductionRun
+);
+
 // Complete production run
 router.post(
   '/:id/complete',
