@@ -130,7 +130,7 @@ exports.getProductionRunById = async (req, res) => {
             {
               model: RawMaterialBatch,
               as: 'batch',
-              attributes: ['id', 'batch_number', 'expiry_date'],
+              attributes: ['id', 'batch_number', 'expiry_date', 'unit_cost'],
               include: [
                 {
                   model: RawMaterial,
@@ -166,7 +166,29 @@ exports.getProductionRunById = async (req, res) => {
       return errorResponse(res, 'Production run not found', 404);
     }
 
-    return successResponse(res, productionRun);
+    // Calculate actual cost for each material based on batch unit_cost (FIFO)
+    const materialsWithCosts = [];
+    if (productionRun.materials && productionRun.materials.length > 0) {
+      for (const material of productionRun.materials) {
+        // Use the actual unit_cost from the batch that was consumed (FIFO principle)
+        const unitCost = parseFloat(material.batch?.unit_cost || 0);
+        const totalCost = unitCost * parseFloat(material.quantity_used || 0);
+
+        materialsWithCosts.push({
+          ...material.toJSON(),
+          average_cost: unitCost,
+          cost: totalCost,
+          unit: material.batch?.material?.unit || 'kg',
+        });
+      }
+    }
+
+    const productionData = {
+      ...productionRun.toJSON(),
+      materials: materialsWithCosts,
+    };
+
+    return successResponse(res, productionData);
   } catch (error) {
     console.error('Error fetching production run:', error);
     return errorResponse(res, 'Failed to fetch production run', 500);
