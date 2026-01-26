@@ -44,7 +44,7 @@ module.exports = (sequelize, DataTypes) => {
       updatedAt: 'updated_at',
       createdAt: 'created_at',
       indexes: [
-        { fields: ['code'] },
+        // code index removed - already created by unique: true constraint
         { fields: ['type'] },
         { fields: ['assigned_route_id'] },
         { fields: ['status'] },

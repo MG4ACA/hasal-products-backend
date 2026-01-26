@@ -36,6 +36,36 @@ module.exports = (sequelize, DataTypes) => {
       clearance_date: {
         type: DataTypes.DATEONLY,
       },
+      // Phase 2: Check bounce handling fields
+      payment_status: {
+        type: DataTypes.ENUM('pending', 'cleared', 'bounced'),
+        defaultValue: 'pending',
+        comment: 'Check payment status lifecycle',
+      },
+      bounce_date: {
+        type: DataTypes.DATEONLY,
+        allowNull: true,
+        comment: 'Date when check bounced',
+      },
+      bounce_fee: {
+        type: DataTypes.DECIMAL(10, 2),
+        defaultValue: 0,
+        comment: 'Fee charged for bounced check',
+      },
+      bounce_reason: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+        comment: 'Reason for check bounce',
+      },
+      reversed_by: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+          model: 'users',
+          key: 'id',
+        },
+        comment: 'User who processed the bounce reversal',
+      },
       reference: {
         type: DataTypes.STRING(100),
       },
@@ -59,6 +89,7 @@ module.exports = (sequelize, DataTypes) => {
         { fields: ['outlet_id'] },
         { fields: ['payment_date'] },
         { fields: ['check_number'] },
+        { fields: ['payment_status'] },
       ],
     }
   );

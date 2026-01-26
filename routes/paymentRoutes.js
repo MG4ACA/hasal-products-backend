@@ -29,4 +29,15 @@ router.put('/:id', roleCheck(['admin', 'manager', 'accountant']), paymentControl
 // DELETE /api/payments/:id - Delete payment
 router.delete('/:id', roleCheck(['admin', 'manager']), paymentController.deletePayment);
 
+// Phase 2: Check bounce handling
+// POST /api/payments/:payment_id/bounce - Bounce a check
+router.post('/:payment_id/bounce', roleCheck(['admin']), paymentController.bounceCheck);
+
+// POST /api/payments/:payment_id/clear - Clear a check
+router.post(
+  '/:payment_id/clear',
+  roleCheck(['admin', 'manager', 'accountant']),
+  paymentController.clearCheck
+);
+
 module.exports = router;

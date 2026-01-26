@@ -599,3 +599,214 @@ exports.getPendingChecks = async (req, res) => {
     return errorResponse(res, 'Error retrieving pending checks', 500, error.message);
   }
 };
+
+/**
+ * Bounce a check payment and reverse all allocations
+ * POST /api/payments/:payment_id/bounce
+ * Phase 2: Check bounce handling
+ */
+exports.bounceCheck = async (req, res) => {
+  const transaction = await sequelize.transaction();
+
+  try {
+    const { payment_id } = req.params;
+    const { bounce_reason, bounce_fee = 0 } = req.body;
+
+    // Authorization check - only admins can bounce checks
+    if (req.user.role !== 'admin') {
+      await transaction.rollback();
+      return errorResponse(res, 'Only admins can process check bounces', 403);
+    }
+
+    // Validate bounce_reason is provided
+    if (!bounce_reason || bounce_reason.trim() === '') {
+      await transaction.rollback();
+      return errorResponse(res, 'Bounce reason is required', 400);
+    }
+
+    // 1. Fetch payment with allocations
+    const payment = await Payment.findByPk(payment_id, {
+      include: [
+        {
+          model: PaymentAllocation,
+          as: 'allocations',
+          include: [
+            {
+              model: SalesInvoice,
+              as: 'invoice',
+            },
+          ],
+        },
+      ],
+    });
+
+    if (!payment) {
+      await transaction.rollback();
+      return errorResponse(res, 'Payment not found', 404);
+    }
+
+    // 2. Validation checks
+    if (payment.payment_method !== 'check') {
+      await transaction.rollback();
+      return errorResponse(res, 'Only check payments can be bounced', 400);
+    }
+
+    if (payment.payment_status === 'bounced') {
+      await transaction.rollback();
+      return errorResponse(res, 'Payment has already been bounced', 400);
+    }
+
+    // 3. Reverse all payment allocations
+    let reversedCount = 0;
+    let totalReversedAmount = 0; // Track total amount to restore
+
+    for (const allocation of payment.allocations) {
+      const invoice = allocation.invoice;
+      const allocatedAmount = parseFloat(allocation.allocated_amount);
+      totalReversedAmount += allocatedAmount;
+
+      // Update invoice check_status
+      if (invoice.payment_method === 'check' && invoice.check_number === payment.check_number) {
+        invoice.check_status = 'bounced';
+      }
+
+      // Recalculate invoice payment status after removing this allocation
+      const remainingAllocations = await PaymentAllocation.findAll({
+        where: {
+          invoice_id: invoice.id,
+          payment_id: { [Op.ne]: payment_id }, // Exclude current payment
+        },
+        transaction,
+      });
+
+      const paidAfterBounce = remainingAllocations.reduce(
+        (sum, alloc) => sum + parseFloat(alloc.allocated_amount),
+        0
+      );
+
+      if (paidAfterBounce <= 0) {
+        invoice.payment_status = 'unpaid';
+      } else if (paidAfterBounce < parseFloat(invoice.total_amount)) {
+        invoice.payment_status = 'partial';
+      } else {
+        invoice.payment_status = 'paid';
+      }
+
+      await invoice.save({ transaction });
+
+      // Delete the allocation
+      await allocation.destroy({ transaction });
+      reversedCount++;
+    }
+
+    // Restore outlet balance (payment amount + bounce fee)
+    const outlet = await Outlet.findByPk(payment.outlet_id, { transaction });
+    const currentBalance = parseFloat(outlet.balance);
+    const newBalance = currentBalance + totalReversedAmount + parseFloat(bounce_fee || 0);
+    outlet.balance = newBalance;
+    await outlet.save({ transaction });
+
+    // 4. Update payment status to bounced
+    payment.payment_status = 'bounced';
+    payment.bounce_date = new Date();
+    payment.bounce_reason = bounce_reason;
+    payment.bounce_fee = bounce_fee;
+    payment.reversed_by = req.user.id;
+    await payment.save({ transaction });
+
+    await transaction.commit();
+
+    return successResponse(res, {
+      message: 'Check bounced successfully',
+      payment: {
+        id: payment.id,
+        check_number: payment.check_number,
+        amount: payment.amount,
+        payment_status: payment.payment_status,
+        bounce_date: payment.bounce_date,
+        bounce_reason: payment.bounce_reason,
+        bounce_fee: payment.bounce_fee,
+      },
+      reversed_allocations: reversedCount,
+      bounce_fee_applied: parseFloat(bounce_fee).toFixed(2),
+    });
+  } catch (error) {
+    await transaction.rollback();
+    console.error('Error bouncing check:', error);
+    return errorResponse(res, 'Failed to bounce check', 500);
+  }
+};
+
+/**
+ * Clear a check payment (mark as cleared)
+ * POST /api/payments/:payment_id/clear
+ * Phase 2: Check lifecycle management
+ */
+exports.clearCheck = async (req, res) => {
+  try {
+    const { payment_id } = req.params;
+    const { clearance_date } = req.body;
+
+    // Fetch payment
+    const payment = await Payment.findByPk(payment_id, {
+      include: [
+        {
+          model: PaymentAllocation,
+          as: 'allocations',
+          include: [
+            {
+              model: SalesInvoice,
+              as: 'invoice',
+            },
+          ],
+        },
+      ],
+    });
+
+    if (!payment) {
+      return errorResponse(res, 'Payment not found', 404);
+    }
+
+    // Validation
+    if (payment.payment_method !== 'check') {
+      return errorResponse(res, 'Only check payments can be cleared', 400);
+    }
+
+    if (payment.payment_status === 'bounced') {
+      return errorResponse(res, 'Bounced checks cannot be cleared', 400);
+    }
+
+    if (payment.payment_status === 'cleared') {
+      return errorResponse(res, 'Payment has already been cleared', 400);
+    }
+
+    // Update payment status
+    payment.payment_status = 'cleared';
+    payment.clearance_date = clearance_date || new Date();
+    await payment.save();
+
+    // Update related invoices' check_status
+    for (const allocation of payment.allocations) {
+      const invoice = allocation.invoice;
+      if (invoice.payment_method === 'check' && invoice.check_number === payment.check_number) {
+        invoice.check_status = 'cleared';
+        invoice.clearance_date = payment.clearance_date;
+        await invoice.save();
+      }
+    }
+
+    return successResponse(res, {
+      message: 'Check cleared successfully',
+      payment: {
+        id: payment.id,
+        check_number: payment.check_number,
+        amount: payment.amount,
+        payment_status: payment.payment_status,
+        clearance_date: payment.clearance_date,
+      },
+    });
+  } catch (error) {
+    console.error('Error clearing check:', error);
+    return errorResponse(res, 'Failed to clear check', 500);
+  }
+};

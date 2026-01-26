@@ -71,6 +71,12 @@ module.exports = (sequelize, DataTypes) => {
       clearance_date: {
         type: DataTypes.DATEONLY,
       },
+      // Phase 2: Check status tracking
+      check_status: {
+        type: DataTypes.ENUM('pending', 'cleared', 'bounced'),
+        allowNull: true,
+        comment: 'Status of check payment',
+      },
       notes: {
         type: DataTypes.TEXT,
       },

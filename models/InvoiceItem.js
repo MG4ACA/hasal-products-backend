@@ -55,11 +55,54 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.BOOLEAN,
         defaultValue: false,
       },
+      // Phase 2: Return validation fields
+      original_invoice_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+          model: 'sales_invoices',
+          key: 'id',
+        },
+        comment: 'Reference to original purchase invoice for returns',
+      },
+      original_invoice_item_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+          model: 'invoice_items',
+          key: 'id',
+        },
+        comment: 'Reference to original item being returned',
+      },
+      return_policy_override: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: false,
+        comment: 'Admin override for out-of-policy returns',
+      },
+      return_policy_override_reason: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+        comment: 'Reason for admin override',
+      },
+      return_policy_override_by: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+          model: 'users',
+          key: 'id',
+        },
+        comment: 'Admin who approved the override',
+      },
     },
     {
       tableName: 'invoice_items',
       timestamps: false,
-      indexes: [{ fields: ['invoice_id'] }, { fields: ['is_return'] }],
+      indexes: [
+        { fields: ['invoice_id'] },
+        { fields: ['is_return'] },
+        { fields: ['original_invoice_id'] },
+        { fields: ['original_invoice_item_id'] },
+      ],
     }
   );
 

@@ -29,7 +29,10 @@ module.exports = (sequelize, DataTypes) => {
       timestamps: true,
       updatedAt: 'updated_at',
       createdAt: 'created_at',
-      indexes: [{ fields: ['code'] }, { fields: ['status'] }],
+      indexes: [
+        // code index removed - already created by unique: true constraint
+        { fields: ['status'] },
+      ],
     }
   );
 

@@ -16,6 +16,15 @@ const { Op } = require('sequelize');
 // Credit limit warning threshold (80%)
 const CREDIT_WARNING_THRESHOLD = 0.8;
 
+// Phase 2: Return Policy Configuration
+const RETURN_POLICY = {
+  damaged: { days: 7, description: 'Damaged goods - 7 days' },
+  expired: { days: 30, description: 'Expired products - 30 days' },
+  excess: { days: 3, description: 'Excess quantity - 3 days' },
+  quality_issue: { days: 7, description: 'Quality issues - 7 days' },
+  other: { days: 3, description: 'Other reasons - 3 days' },
+};
+
 // Get all sales invoices with pagination, search, and filters
 exports.getAllInvoices = async (req, res) => {
   try {
@@ -227,6 +236,111 @@ exports.createInvoice = async (req, res) => {
       return errorResponse(res, 'Invoice must have at least one item', 400);
     }
 
+    // **PHASE 2: Return Validation**
+    for (const item of items) {
+      if (item.is_return) {
+        // 1. Require original invoice reference
+        if (!item.original_invoice_id) {
+          await transaction.rollback();
+          return errorResponse(res, 'Returns must reference an original purchase invoice', 400);
+        }
+
+        // 2. Fetch original invoice with its items
+        const originalInvoice = await SalesInvoice.findByPk(item.original_invoice_id, {
+          include: [
+            {
+              model: InvoiceItem,
+              as: 'items',
+              where: { is_return: false },
+            },
+          ],
+        });
+
+        if (!originalInvoice) {
+          await transaction.rollback();
+          return errorResponse(res, 'Original purchase invoice not found', 404);
+        }
+
+        // Verify outlet matches
+        if (originalInvoice.outlet_id !== outlet_id) {
+          await transaction.rollback();
+          return errorResponse(
+            res,
+            'Return must be for the same outlet as the original purchase',
+            400
+          );
+        }
+
+        // 3. Time limit validation
+        const returnReason = item.return_reason || 'other';
+        const policy = RETURN_POLICY[returnReason];
+        const daysSincePurchase = Math.floor(
+          (new Date(invoice_date) - new Date(originalInvoice.invoice_date)) / (1000 * 60 * 60 * 24)
+        );
+
+        if (daysSincePurchase > policy.days) {
+          // Check admin override
+          if (req.user.role !== 'admin' || !item.return_policy_override) {
+            await transaction.rollback();
+            return errorResponse(
+              res,
+              `Return exceeds policy: ${policy.description} (${daysSincePurchase} days since purchase, limit ${policy.days} days). Admin override required.`,
+              400
+            );
+          }
+
+          // Admin override - require reason
+          if (
+            !item.return_policy_override_reason ||
+            item.return_policy_override_reason.trim() === ''
+          ) {
+            await transaction.rollback();
+            return errorResponse(
+              res,
+              'Admin override for out-of-policy return requires a reason',
+              400
+            );
+          }
+        }
+
+        // 4. Quantity validation - find the specific item in original invoice
+        const originalItem = originalInvoice.items.find(i => i.sku_id === item.sku_id);
+        if (!originalItem) {
+          await transaction.rollback();
+          return errorResponse(
+            res,
+            `SKU ${item.sku_id} was not purchased in the original invoice ${originalInvoice.invoice_number}`,
+            404
+          );
+        }
+
+        // Calculate total already returned for this original item
+        const existingReturns = await InvoiceItem.findAll({
+          where: {
+            original_invoice_item_id: originalItem.id,
+            is_return: true,
+          },
+        });
+
+        const totalReturned = existingReturns.reduce((sum, ret) => sum + Math.abs(ret.quantity), 0);
+
+        const originalQuantity = Math.abs(originalItem.quantity);
+        const attemptedReturn = Math.abs(item.quantity);
+
+        if (totalReturned + attemptedReturn > originalQuantity) {
+          await transaction.rollback();
+          return errorResponse(
+            res,
+            `Return quantity exceeds original purchase. Original: ${originalQuantity}, Already returned: ${totalReturned}, Attempted: ${attemptedReturn}`,
+            400
+          );
+        }
+
+        // Store original_invoice_item_id for tracking
+        item.original_invoice_item_id = originalItem.id;
+      }
+    }
+
     // Generate invoice number
     const invoice_number = await generateInvoiceNumber(new Date(invoice_date));
 
@@ -277,6 +391,13 @@ exports.createInvoice = async (req, res) => {
         is_return: item.is_return || false,
         return_reason: item.return_reason || null,
         return_to_stock: item.return_to_stock || false,
+        // Phase 2: Return validation fields
+        original_invoice_id: item.original_invoice_id || null,
+        original_invoice_item_id: item.original_invoice_item_id || null,
+        return_policy_override: item.return_policy_override || false,
+        return_policy_override_reason: item.return_policy_override_reason || null,
+        return_policy_override_by:
+          item.return_policy_override && req.user.role === 'admin' ? req.user.id : null,
       });
     }
 
@@ -330,10 +451,12 @@ exports.createInvoice = async (req, res) => {
 
     // Determine payment status
     let payment_status = 'unpaid';
+    let check_status = null;
     if (payment_method === 'cash') {
       payment_status = 'paid';
     } else if (payment_method === 'check') {
-      payment_status = check_number ? 'unpaid' : 'unpaid'; // Check needs clearance
+      payment_status = 'unpaid'; // Check needs clearance
+      check_status = 'pending'; // Phase 2: Track check lifecycle
     }
 
     // Create invoice
@@ -352,6 +475,7 @@ exports.createInvoice = async (req, res) => {
         payment_status,
         check_number: check_number || null,
         check_date: check_date || null,
+        check_status: check_status, // Phase 2: Check lifecycle status
         notes: notes || null,
         created_by: req.user.id,
         // Phase 1: Credit limit snapshot and override fields
@@ -726,5 +850,109 @@ exports.getDailyMonthlyProfitSummary = async (req, res) => {
   } catch (error) {
     console.error('Error generating profit summary:', error);
     return errorResponse(res, 'Failed to generate profit summary', 500);
+  }
+};
+
+/**
+ * Get purchase history for an outlet and SKU (for return validation)
+ * GET /api/sales-invoices/purchase-history?outlet_id=1&sku_id=5
+ * Phase 2: Return fraud prevention
+ */
+exports.getPurchaseHistory = async (req, res) => {
+  try {
+    const { outlet_id, sku_id } = req.query;
+
+    if (!outlet_id || !sku_id) {
+      return errorResponse(res, 'outlet_id and sku_id are required', 400);
+    }
+
+    const purchases = await SalesInvoice.findAll({
+      where: {
+        outlet_id,
+        payment_status: ['paid', 'partial'], // Only completed sales
+      },
+      include: [
+        {
+          model: InvoiceItem,
+          as: 'items',
+          where: {
+            sku_id,
+            is_return: false, // Only actual sales, not returns
+          },
+          required: true,
+          include: [
+            {
+              model: ProductSku,
+              as: 'sku',
+              attributes: ['id', 'size', 'unit', 'price'],
+              include: [
+                {
+                  model: Product,
+                  as: 'product',
+                  attributes: ['id', 'name', 'code'],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      order: [['invoice_date', 'DESC']],
+      limit: 20, // Last 20 purchases
+    });
+
+    // For each purchase, calculate how much has been returned
+    const purchasesWithReturns = await Promise.all(
+      purchases.map(async purchase => {
+        const item = purchase.items.find(i => i.sku_id === parseInt(sku_id));
+
+        if (!item) return null;
+
+        // Get existing returns for this specific item
+        const existingReturns = await InvoiceItem.findAll({
+          where: {
+            original_invoice_item_id: item.id,
+            is_return: true,
+          },
+        });
+
+        const totalReturned = existingReturns.reduce((sum, ret) => sum + Math.abs(ret.quantity), 0);
+
+        const originalQuantity = Math.abs(item.quantity);
+        const remainingQuantity = originalQuantity - totalReturned;
+
+        return {
+          invoice_id: purchase.id,
+          invoice_number: purchase.invoice_number,
+          invoice_date: purchase.invoice_date,
+          item_id: item.id,
+          quantity: originalQuantity,
+          unit_price: item.unit_price,
+          already_returned: totalReturned,
+          can_return: remainingQuantity,
+          days_since_purchase: Math.floor(
+            (new Date() - new Date(purchase.invoice_date)) / (1000 * 60 * 60 * 24)
+          ),
+        };
+      })
+    );
+
+    // Filter out nulls and items with nothing left to return
+    const validPurchases = purchasesWithReturns.filter(p => p !== null && p.can_return > 0);
+
+    // Get product info from first purchase
+    const productInfo =
+      purchases.length > 0 && purchases[0].items.length > 0
+        ? purchases[0].items[0].sku?.product
+        : null;
+
+    return successResponse(res, {
+      outlet_id,
+      sku_id,
+      product: productInfo,
+      purchases: validPurchases,
+    });
+  } catch (error) {
+    console.error('Error fetching purchase history:', error);
+    return errorResponse(res, 'Failed to fetch purchase history', 500);
   }
 };
