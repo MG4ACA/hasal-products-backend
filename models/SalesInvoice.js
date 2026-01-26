@@ -74,6 +74,46 @@ module.exports = (sequelize, DataTypes) => {
       notes: {
         type: DataTypes.TEXT,
       },
+      // Credit limit override fields (Phase 1)
+      credit_limit_override_reason: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+        comment: 'Reason provided by admin when overriding credit limit',
+      },
+      credit_limit_override_by: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+          model: 'users',
+          key: 'id',
+        },
+        comment: 'User ID who overrode credit limit',
+      },
+      // Audit snapshot fields (Phase 1)
+      credit_limit_at_time: {
+        type: DataTypes.DECIMAL(15, 2),
+        allowNull: true,
+        comment: 'Snapshot of outlet credit limit at invoice creation',
+      },
+      outlet_balance_at_time: {
+        type: DataTypes.DECIMAL(15, 2),
+        allowNull: true,
+        comment: 'Snapshot of outlet balance at invoice creation',
+      },
+      // Paid amount virtual field (Phase 1)
+      paid_amount: {
+        type: DataTypes.VIRTUAL,
+        get() {
+          // Calculate from payment allocations
+          if (this.allocations && Array.isArray(this.allocations)) {
+            return this.allocations.reduce(
+              (sum, alloc) => sum + parseFloat(alloc.allocated_amount || 0),
+              0
+            );
+          }
+          return 0;
+        },
+      },
       created_by: {
         type: DataTypes.INTEGER,
         allowNull: false,

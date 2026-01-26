@@ -13,6 +13,9 @@ const { successResponse, errorResponse } = require('../utils/response');
 const { generateInvoiceNumber } = require('../utils/invoiceNumberGenerator');
 const { Op } = require('sequelize');
 
+// Credit limit warning threshold (80%)
+const CREDIT_WARNING_THRESHOLD = 0.8;
+
 // Get all sales invoices with pagination, search, and filters
 exports.getAllInvoices = async (req, res) => {
   try {
@@ -279,6 +282,52 @@ exports.createInvoice = async (req, res) => {
 
     const total_amount = subtotal - total_discount_amount;
 
+    // **PHASE 1: Credit Limit Enforcement**
+    let creditWarning = null;
+    if (payment_method === 'credit') {
+      const currentBalance = parseFloat(outlet.balance || 0);
+      const creditLimit = parseFloat(outlet.credit_limit || 0);
+      const potentialBalance = currentBalance + total_amount;
+      const utilizationPercent = creditLimit > 0 ? (potentialBalance / creditLimit) * 100 : 0;
+
+      // Hard block at 100% for non-admins
+      if (potentialBalance > creditLimit) {
+        if (req.user.role !== 'admin') {
+          await transaction.rollback();
+          return errorResponse(
+            res,
+            `Credit limit exceeded. Current: Rs. ${currentBalance.toFixed(2)}, Limit: Rs. ${creditLimit.toFixed(2)}, Invoice: Rs. ${total_amount.toFixed(2)}, New Balance: Rs. ${potentialBalance.toFixed(2)} (${utilizationPercent.toFixed(1)}%)`,
+            400
+          );
+        }
+
+        // Admin override - require reason
+        if (
+          !req.body.credit_limit_override_reason ||
+          req.body.credit_limit_override_reason.trim() === ''
+        ) {
+          await transaction.rollback();
+          return errorResponse(
+            res,
+            'Admin override requires a reason for exceeding credit limit',
+            400
+          );
+        }
+      }
+
+      // Warning at 80% (return in response)
+      if (potentialBalance >= creditLimit * CREDIT_WARNING_THRESHOLD) {
+        creditWarning = {
+          message: `Approaching/Exceeding credit limit (${utilizationPercent.toFixed(1)}%)`,
+          currentBalance: currentBalance.toFixed(2),
+          creditLimit: creditLimit.toFixed(2),
+          potentialBalance: potentialBalance.toFixed(2),
+          utilizationPercent: utilizationPercent.toFixed(1),
+          isExceeded: potentialBalance > creditLimit,
+        };
+      }
+    }
+
     // Determine payment status
     let payment_status = 'unpaid';
     if (payment_method === 'cash') {
@@ -305,6 +354,11 @@ exports.createInvoice = async (req, res) => {
         check_date: check_date || null,
         notes: notes || null,
         created_by: req.user.id,
+        // Phase 1: Credit limit snapshot and override fields
+        credit_limit_at_time: payment_method === 'credit' ? outlet.credit_limit : null,
+        outlet_balance_at_time: payment_method === 'credit' ? outlet.balance : null,
+        credit_limit_override_reason: req.body.credit_limit_override_reason || null,
+        credit_limit_override_by: req.body.credit_limit_override_reason ? req.user.id : null,
       },
       { transaction }
     );
@@ -353,7 +407,13 @@ exports.createInvoice = async (req, res) => {
       ],
     });
 
-    return successResponse(res, createdInvoice, 201);
+    // Phase 1: Include credit warning in response
+    const response = {
+      invoice: createdInvoice,
+      creditWarning,
+    };
+
+    return successResponse(res, response, 201);
   } catch (error) {
     await transaction.rollback();
     console.error('Error creating invoice:', error);
@@ -498,7 +558,7 @@ exports.getSaleProfit = async (req, res) => {
     }
 
     const itemProfits = invoice.items.map(item => {
-      const unitPrice = parseFloat(item.price || 0);
+      const unitPrice = parseFloat(item.unit_price || 0); // PHASE 1 FIX: was item.price
       const unitCost = parseFloat(item.sku.average_cost || 0);
       const quantity = parseFloat(item.quantity || 0);
 
@@ -610,7 +670,7 @@ exports.getDailyMonthlyProfitSummary = async (req, res) => {
 
       invoice.items.forEach(item => {
         const quantity = parseFloat(item.quantity || 0);
-        const price = parseFloat(item.price || 0);
+        const price = parseFloat(item.unit_price || 0); // PHASE 1 FIX: was item.price
         const cost = parseFloat(item.sku.average_cost || 0);
 
         invoiceRevenue += quantity * price;
