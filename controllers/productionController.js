@@ -25,21 +25,41 @@ exports.getAllProductionRuns = async (req, res) => {
       limit = 10,
       status = '',
       product_id = '',
+      recipe_id = '',
+      search = '',
       date_from = '',
       date_to = '',
     } = req.query;
     const offset = (page - 1) * limit;
 
     const where = {};
+    const { sequelize } = db;
+    const { Op } = require('sequelize');
 
     // Status filter
     if (status) {
       where.status = status;
     }
 
-    // Product filter
+    // Recipe filter
+    if (recipe_id) {
+      where.recipe_id = recipe_id;
+    }
+
+    // Product filter (through recipe -> productSku -> product relationship)
     if (product_id) {
-      where.product_id = product_id;
+      where[Op.and] = sequelize.where(
+        sequelize.col('recipe->productSku->product.id'),
+        Op.eq,
+        product_id
+      );
+    }
+
+    // Search filter (search in batch_number)
+    if (search) {
+      where.batch_number = {
+        [Op.like]: `%${search}%`,
+      };
     }
 
     // Date range filter
@@ -56,36 +76,40 @@ exports.getAllProductionRuns = async (req, res) => {
       };
     }
 
+    const includeOptions = [
+      {
+        model: Recipe,
+        as: 'recipe',
+        attributes: ['id', 'name', 'version', 'expected_yield', 'yield_unit', 'product_sku_id'],
+        required: product_id ? true : false,
+        include: [
+          {
+            model: ProductSku,
+            as: 'productSku',
+            attributes: ['id', 'size', 'unit'],
+            required: product_id ? true : false,
+            include: [
+              {
+                model: Product,
+                as: 'product',
+                attributes: ['id', 'code', 'name'],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        model: db.User,
+        as: 'producedBy',
+        attributes: ['id', 'username'],
+      },
+    ];
+
     const { count, rows } = await ProductionRun.findAndCountAll({
       where,
+      include: includeOptions,
       limit: parseInt(limit),
       offset: parseInt(offset),
-      include: [
-        {
-          model: Recipe,
-          as: 'recipe',
-          attributes: ['id', 'name', 'version', 'expected_yield', 'yield_unit', 'product_sku_id'],
-          include: [
-            {
-              model: ProductSku,
-              as: 'productSku',
-              attributes: ['id', 'size', 'unit'],
-              include: [
-                {
-                  model: Product,
-                  as: 'product',
-                  attributes: ['id', 'code', 'name'],
-                },
-              ],
-            },
-          ],
-        },
-        {
-          model: db.User,
-          as: 'producedBy',
-          attributes: ['id', 'username'],
-        },
-      ],
       order: [['production_date', 'DESC']],
       distinct: true,
     });
