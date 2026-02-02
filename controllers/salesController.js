@@ -180,7 +180,7 @@ exports.getInvoiceById = async (req, res) => {
         },
         {
           model: User,
-          as: 'creator',
+          as: 'createdBy',
           attributes: ['id', 'username', 'role'],
         },
       ],

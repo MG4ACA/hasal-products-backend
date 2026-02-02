@@ -451,7 +451,7 @@ const seedDatabase = async () => {
         {
           code: 'PROD001',
           name: 'Premium Curry Mix',
-          category: 'Mixed Spices',
+          category: 'spice',
           barcode: 'PROD001BAR',
           description: 'Authentic blend of traditional spices',
           status: 'active',
@@ -467,7 +467,7 @@ const seedDatabase = async () => {
         {
           code: 'PROD003',
           name: 'Hot Chili Blend',
-          category: 'Mixed Spices',
+          category: 'spice',
           barcode: 'PROD003BAR',
           description: 'Fiery blend of chili spices',
           status: 'active',
@@ -475,7 +475,7 @@ const seedDatabase = async () => {
         {
           code: 'PROD004',
           name: 'Roasted Curry Powder',
-          category: 'Mixed Spices',
+          category: 'spice',
           barcode: 'PROD004BAR',
           description: 'Premium roasted curry powder',
           status: 'active',
@@ -499,7 +499,7 @@ const seedDatabase = async () => {
           unit: 'g',
           barcode: 'SKU001',
           price: 450,
-          current_stock: 100,
+          current_stock: 0,
           status: 'active',
         },
         {
@@ -508,7 +508,7 @@ const seedDatabase = async () => {
           unit: 'g',
           barcode: 'SKU002',
           price: 2000,
-          current_stock: 50,
+          current_stock: 0,
           status: 'active',
         },
         {
@@ -517,7 +517,7 @@ const seedDatabase = async () => {
           unit: 'g',
           barcode: 'SKU003',
           price: 350,
-          current_stock: 150,
+          current_stock: 0,
           status: 'active',
         },
         {
@@ -526,7 +526,7 @@ const seedDatabase = async () => {
           unit: 'g',
           barcode: 'SKU004',
           price: 500,
-          current_stock: 75,
+          current_stock: 0,
           status: 'active',
         },
         {
