@@ -137,6 +137,10 @@ app.use('/api/sales-invoices', salesRoutes);
 const paymentRoutes = require('./routes/paymentRoutes');
 app.use('/api/payments', paymentRoutes);
 
+// Dashboard Routes
+const dashboardRoutes = require('./routes/dashboardRoutes');
+app.use('/api/dashboard', dashboardRoutes);
+
 // 404 handler (must be after all routes)
 app.use(notFound);
 
