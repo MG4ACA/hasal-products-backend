@@ -687,24 +687,22 @@ const seedDatabase = async () => {
           yield_unit: 'kg',
           is_active: true,
           notes: 'Traditional blend',
+          product_id: products[0].id,
+          product_sku_id: skus[0].id,
         },
         {
           code: 'RCP002',
           name: 'Roasted Curry Powder Recipe',
           version: 2,
-          product_sku_id: null, // Will be updated after SKU linking
           expected_yield: 100,
           yield_unit: 'kg',
           is_active: true,
           notes: 'Premium roasted curry powder blend - for Week 5 testing',
+          product_id: products[3].id,
+          product_sku_id: skus[4].id,
         },
       ]);
       console.log(`✅ Created ${recipes.length} recipes`);
-
-      // Link recipe to Roasted Curry Powder SKU (100g size) - only for new recipes
-      if (recipes.length > 1 && recipes[1].code === 'RCP002') {
-        await recipes[1].update({ product_sku_id: skus[4].id });
-      }
     }
 
     // Seed Recipe Items (skip if already exist)
