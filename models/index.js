@@ -68,12 +68,12 @@ db.RawMaterialBatch.hasMany(db.ProductionMaterial, {
 });
 
 // Employee associations
-db.Employee.belongsTo(db.Route, { foreignKey: 'assigned_route_id', as: 'assignedRoute' });
+db.Employee.hasMany(db.Route, { foreignKey: 'sales_ref_id', as: 'assignedRoutes' });
 db.Employee.hasMany(db.SalesInvoice, { foreignKey: 'sales_ref_id', as: 'salesInvoices' });
 
 // Route associations
+db.Route.belongsTo(db.Employee, { foreignKey: 'sales_ref_id', as: 'salesRep' });
 db.Route.hasMany(db.Outlet, { foreignKey: 'route_id', as: 'outlets' });
-db.Route.hasMany(db.Employee, { foreignKey: 'assigned_route_id', as: 'employees' });
 db.Route.hasMany(db.RouteVehicleHistory, { foreignKey: 'route_id', as: 'vehicleHistory' });
 db.Route.hasMany(db.SalesInvoice, { foreignKey: 'route_id', as: 'salesInvoices' });
 

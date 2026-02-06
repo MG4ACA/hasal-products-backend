@@ -49,7 +49,7 @@ exports.getAllRoutes = async (req, res) => {
         },
         {
           model: Employee,
-          as: 'employees',
+          as: 'salesRep',
           attributes: ['id', 'code', 'name', 'type', 'status'],
         },
       ],
@@ -84,7 +84,7 @@ exports.getRouteById = async (req, res) => {
         },
         {
           model: Employee,
-          as: 'employees',
+          as: 'salesRep',
           attributes: ['id', 'code', 'name', 'type', 'phone', 'status'],
         },
       ],
@@ -105,12 +105,34 @@ exports.getRouteById = async (req, res) => {
 exports.createRoute = async (req, res) => {
   const transaction = await sequelize.transaction();
   try {
-    const { name, description, status, territory_length } = req.body;
+    const { name, description, status, territory_length, sales_ref_id } = req.body;
 
     // Validation
     if (!name) {
       await transaction.rollback();
       return errorResponse(res, 'Route name is required', 400);
+    }
+
+    if (!sales_ref_id) {
+      await transaction.rollback();
+      return errorResponse(res, 'Sales representative is required', 400);
+    }
+
+    // Verify sales rep exists and is a sales_ref type
+    const salesRep = await Employee.findByPk(sales_ref_id);
+    if (!salesRep) {
+      await transaction.rollback();
+      return errorResponse(res, 'Sales representative not found', 404);
+    }
+
+    if (salesRep.type !== 'sales_ref') {
+      await transaction.rollback();
+      return errorResponse(res, 'Selected employee must be a sales representative', 400);
+    }
+
+    if (salesRep.status !== 'active') {
+      await transaction.rollback();
+      return errorResponse(res, 'Sales representative must be active', 400);
     }
 
     // Validate territory_length if provided
@@ -132,6 +154,7 @@ exports.createRoute = async (req, res) => {
         description,
         status: status || 'active',
         territory_length: territory_length ? parseFloat(territory_length) : null,
+        sales_ref_id,
       },
       { transaction }
     );
@@ -151,13 +174,37 @@ exports.updateRoute = async (req, res) => {
   const transaction = await sequelize.transaction();
   try {
     const { id } = req.params;
-    const { name, description, status, territory_length } = req.body;
+    const { name, description, status, territory_length, sales_ref_id } = req.body;
 
     const route = await Route.findByPk(id);
 
     if (!route) {
       await transaction.rollback();
       return errorResponse(res, 'Route not found', 404);
+    }
+
+    // Validate sales_ref_id if provided
+    if (sales_ref_id !== undefined) {
+      if (!sales_ref_id) {
+        await transaction.rollback();
+        return errorResponse(res, 'Sales representative is required', 400);
+      }
+
+      const salesRep = await Employee.findByPk(sales_ref_id);
+      if (!salesRep) {
+        await transaction.rollback();
+        return errorResponse(res, 'Sales representative not found', 404);
+      }
+
+      if (salesRep.type !== 'sales_ref') {
+        await transaction.rollback();
+        return errorResponse(res, 'Selected employee must be a sales representative', 400);
+      }
+
+      if (salesRep.status !== 'active') {
+        await transaction.rollback();
+        return errorResponse(res, 'Sales representative must be active', 400);
+      }
     }
 
     // Validate territory_length if provided
@@ -175,6 +222,7 @@ exports.updateRoute = async (req, res) => {
     if (status) route.status = status;
     if (territory_length !== undefined)
       route.territory_length = territory_length ? parseFloat(territory_length) : null;
+    if (sales_ref_id !== undefined) route.sales_ref_id = sales_ref_id;
 
     await route.save({ transaction });
 
@@ -197,7 +245,7 @@ exports.deleteRoute = async (req, res) => {
     const route = await Route.findByPk(id, {
       include: [
         { model: Outlet, as: 'outlets' },
-        { model: Employee, as: 'employees' },
+        { model: Employee, as: 'salesRep' },
       ],
     });
 

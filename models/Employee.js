@@ -26,13 +26,6 @@ module.exports = (sequelize, DataTypes) => {
       email: {
         type: DataTypes.STRING(100),
       },
-      assigned_route_id: {
-        type: DataTypes.INTEGER,
-        references: {
-          model: 'routes',
-          key: 'id',
-        },
-      },
       status: {
         type: DataTypes.ENUM('active', 'inactive'),
         defaultValue: 'active',
@@ -46,7 +39,6 @@ module.exports = (sequelize, DataTypes) => {
       indexes: [
         // code index removed - already created by unique: true constraint
         { fields: ['type'] },
-        { fields: ['assigned_route_id'] },
         { fields: ['status'] },
       ],
     }

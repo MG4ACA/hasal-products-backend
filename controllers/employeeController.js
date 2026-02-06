@@ -18,7 +18,7 @@ async function generateEmployeeCode() {
 // Get all employees with pagination and search
 exports.getAllEmployees = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search = '', status = '', type = '', route_id = '' } = req.query;
+    const { page = 1, limit = 10, search = '', status = '', type = '' } = req.query;
     const offset = (page - 1) * limit;
 
     const where = {};
@@ -43,11 +43,6 @@ exports.getAllEmployees = async (req, res) => {
       where.type = type;
     }
 
-    // Filter by assigned route
-    if (route_id) {
-      where.assigned_route_id = route_id;
-    }
-
     const { count, rows } = await Employee.findAndCountAll({
       where,
       limit: parseInt(limit),
@@ -56,8 +51,8 @@ exports.getAllEmployees = async (req, res) => {
       include: [
         {
           model: Route,
-          as: 'assignedRoute',
-          attributes: ['id', 'code', 'name', 'status'],
+          as: 'assignedRoutes',
+          attributes: ['id', 'code', 'name', 'status', 'territory_length'],
         },
       ],
     });
@@ -86,8 +81,8 @@ exports.getEmployeeById = async (req, res) => {
       include: [
         {
           model: Route,
-          as: 'assignedRoute',
-          attributes: ['id', 'code', 'name', 'status'],
+          as: 'assignedRoutes',
+          attributes: ['id', 'code', 'name', 'status', 'territory_length'],
         },
       ],
     });
@@ -145,14 +140,16 @@ exports.createEmployee = async (req, res) => {
 
     await transaction.commit();
 
-    // Fetch with route
+    // Fetch with assigned routes
     const newEmployee = await Employee.findByPk(employee.id, {
-      include: [{ model: Route, as: 'assignedRoute', attributes: ['id', 'code', 'name'] }],
+      include: [{ model: Route, as: 'assignedRoutes', attributes: ['id', 'code', 'name'] }],
     });
 
     return successResponse(res, newEmployee, 'Employee created successfully', 201);
   } catch (err) {
-    await transaction.rollback();
+    if (!transaction.finished) {
+      await transaction.rollback();
+    }
     console.error('Error creating employee:', err);
     return errorResponse(res, 'Failed to create employee', 500);
   }
@@ -193,14 +190,16 @@ exports.updateEmployee = async (req, res) => {
 
     await transaction.commit();
 
-    // Fetch with route
+    // Fetch with assigned routes
     const updatedEmployee = await Employee.findByPk(id, {
-      include: [{ model: Route, as: 'assignedRoute', attributes: ['id', 'code', 'name'] }],
+      include: [{ model: Route, as: 'assignedRoutes', attributes: ['id', 'code', 'name'] }],
     });
 
     return successResponse(res, updatedEmployee, 'Employee updated successfully');
   } catch (err) {
-    await transaction.rollback();
+    if (!transaction.finished) {
+      await transaction.rollback();
+    }
     console.error('Error updating employee:', err);
     return errorResponse(res, 'Failed to update employee', 500);
   }

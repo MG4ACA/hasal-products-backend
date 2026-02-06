@@ -32,6 +32,16 @@ module.exports = (sequelize, DataTypes) => {
           max: 150,
         },
       },
+      sales_ref_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true, // Temporarily nullable for migration
+        references: {
+          model: 'employees',
+          key: 'id',
+        },
+        onDelete: 'RESTRICT',
+        onUpdate: 'CASCADE',
+      },
     },
     {
       tableName: 'routes',
@@ -41,6 +51,7 @@ module.exports = (sequelize, DataTypes) => {
       indexes: [
         // code index removed - already created by unique: true constraint
         { fields: ['status'] },
+        { fields: ['sales_ref_id'] },
       ],
     }
   );
