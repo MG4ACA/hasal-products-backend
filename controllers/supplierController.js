@@ -293,8 +293,8 @@ exports.getSupplierPayments = async (req, res) => {
         },
         {
           model: User,
-          as: 'creator',
-          attributes: ['id', 'username', 'name'],
+          as: 'createdBy',
+          attributes: ['id', 'username', 'full_name'],
         },
       ],
       order: [
@@ -396,8 +396,8 @@ exports.getAllSupplierPayments = async (req, res) => {
         },
         {
           model: User,
-          as: 'creator',
-          attributes: ['id', 'username', 'name'],
+          as: 'createdBy',
+          attributes: ['id', 'username', 'full_name'],
         },
       ],
       order: [
@@ -523,8 +523,8 @@ exports.createSupplierPayment = async (req, res) => {
         },
         {
           model: User,
-          as: 'creator',
-          attributes: ['id', 'username', 'name'],
+          as: 'createdBy',
+          attributes: ['id', 'username', 'full_name'],
         },
       ],
     });
@@ -621,8 +621,8 @@ exports.clearSupplierPayment = async (req, res) => {
         },
         {
           model: User,
-          as: 'creator',
-          attributes: ['id', 'username', 'name'],
+          as: 'createdBy',
+          attributes: ['id', 'username', 'full_name'],
         },
       ],
     });

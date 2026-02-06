@@ -23,6 +23,15 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.ENUM('active', 'inactive'),
         defaultValue: 'active',
       },
+      territory_length: {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: true,
+        defaultValue: null,
+        validate: {
+          min: 0,
+          max: 150,
+        },
+      },
     },
     {
       tableName: 'routes',

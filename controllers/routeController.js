@@ -105,12 +105,21 @@ exports.getRouteById = async (req, res) => {
 exports.createRoute = async (req, res) => {
   const transaction = await sequelize.transaction();
   try {
-    const { name, description, status } = req.body;
+    const { name, description, status, territory_length } = req.body;
 
     // Validation
     if (!name) {
       await transaction.rollback();
       return errorResponse(res, 'Route name is required', 400);
+    }
+
+    // Validate territory_length if provided
+    if (territory_length !== undefined && territory_length !== null) {
+      const length = parseFloat(territory_length);
+      if (isNaN(length) || length < 0 || length > 150) {
+        await transaction.rollback();
+        return errorResponse(res, 'Territory length must be between 0 and 150 km', 400);
+      }
     }
 
     // Generate route code
@@ -122,6 +131,7 @@ exports.createRoute = async (req, res) => {
         name,
         description,
         status: status || 'active',
+        territory_length: territory_length ? parseFloat(territory_length) : null,
       },
       { transaction }
     );
@@ -141,7 +151,7 @@ exports.updateRoute = async (req, res) => {
   const transaction = await sequelize.transaction();
   try {
     const { id } = req.params;
-    const { name, description, status } = req.body;
+    const { name, description, status, territory_length } = req.body;
 
     const route = await Route.findByPk(id);
 
@@ -150,10 +160,21 @@ exports.updateRoute = async (req, res) => {
       return errorResponse(res, 'Route not found', 404);
     }
 
+    // Validate territory_length if provided
+    if (territory_length !== undefined && territory_length !== null) {
+      const length = parseFloat(territory_length);
+      if (isNaN(length) || length < 0 || length > 150) {
+        await transaction.rollback();
+        return errorResponse(res, 'Territory length must be between 0 and 150 km', 400);
+      }
+    }
+
     // Update fields
     if (name) route.name = name;
     if (description !== undefined) route.description = description;
     if (status) route.status = status;
+    if (territory_length !== undefined)
+      route.territory_length = territory_length ? parseFloat(territory_length) : null;
 
     await route.save({ transaction });
 
