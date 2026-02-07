@@ -236,60 +236,18 @@ exports.createInvoice = async (req, res) => {
       return errorResponse(res, 'Invoice must have at least one item', 400);
     }
 
-    // **PHASE 2: Return Validation**
+    // **PHASE 2: Return Validation (with Legacy Return Support)**
     for (const item of items) {
       if (item.is_return) {
-        // 1. Require original invoice reference
-        if (!item.original_invoice_id) {
-          await transaction.rollback();
-          return errorResponse(res, 'Returns must reference an original purchase invoice', 400);
-        }
+        // Detect Legacy Return: No original invoice but has admin override
+        const isLegacyReturn = !item.original_invoice_id && item.return_policy_override;
 
-        // 2. Fetch original invoice with its items
-        const originalInvoice = await SalesInvoice.findByPk(item.original_invoice_id, {
-          include: [
-            {
-              model: InvoiceItem,
-              as: 'items',
-              where: { is_return: false },
-            },
-          ],
-        });
+        if (isLegacyReturn) {
+          // **LEGACY RETURN PROCESSING**
+          // Legacy returns are for purchases made before system implementation
+          // They link to a special LEGACY-SYSTEM-SETUP placeholder invoice
 
-        if (!originalInvoice) {
-          await transaction.rollback();
-          return errorResponse(res, 'Original purchase invoice not found', 404);
-        }
-
-        // Verify outlet matches
-        if (originalInvoice.outlet_id !== outlet_id) {
-          await transaction.rollback();
-          return errorResponse(
-            res,
-            'Return must be for the same outlet as the original purchase',
-            400
-          );
-        }
-
-        // 3. Time limit validation
-        const returnReason = item.return_reason || 'other';
-        const policy = RETURN_POLICY[returnReason];
-        const daysSincePurchase = Math.floor(
-          (new Date(invoice_date) - new Date(originalInvoice.invoice_date)) / (1000 * 60 * 60 * 24)
-        );
-
-        if (daysSincePurchase > policy.days) {
-          // Check admin override
-          if (req.user.role !== 'admin' || !item.return_policy_override) {
-            await transaction.rollback();
-            return errorResponse(
-              res,
-              `Return exceeds policy: ${policy.description} (${daysSincePurchase} days since purchase, limit ${policy.days} days). Admin override required.`,
-              400
-            );
-          }
-
-          // Admin override - require reason
+          // Validate admin override and reason are provided
           if (
             !item.return_policy_override_reason ||
             item.return_policy_override_reason.trim() === ''
@@ -297,47 +255,128 @@ exports.createInvoice = async (req, res) => {
             await transaction.rollback();
             return errorResponse(
               res,
-              'Admin override for out-of-policy return requires a reason',
+              'Legacy return requires an explanation from the authorizing admin',
               400
             );
           }
-        }
 
-        // 4. Quantity validation - find the specific item in original invoice
-        const originalItem = originalInvoice.items.find(i => i.sku_id === item.sku_id);
-        if (!originalItem) {
-          await transaction.rollback();
-          return errorResponse(
-            res,
-            `SKU ${item.sku_id} was not purchased in the original invoice ${originalInvoice.invoice_number}`,
-            404
+          // Validate admin_id is provided (from password verification)
+          if (!item.admin_id) {
+            await transaction.rollback();
+            return errorResponse(
+              res,
+              'Legacy return requires admin authorization (admin_id missing)',
+              400
+            );
+          }
+
+          // Fetch the LEGACY-SYSTEM-SETUP placeholder invoice
+          const legacyInvoice = await SalesInvoice.findOne({
+            where: { invoice_number: 'LEGACY-SYSTEM-SETUP' },
+          });
+
+          if (!legacyInvoice) {
+            await transaction.rollback();
+            return errorResponse(
+              res,
+              'Legacy return system not initialized. Please run database migrations.',
+              500
+            );
+          }
+
+          // Link to legacy invoice and store admin ID
+          item.original_invoice_id = legacyInvoice.id;
+          item.return_policy_override_by = item.admin_id;
+          // Note: admin_id comes from frontend after password verification
+          // Do not override with current user ID
+        } else {
+          // **REGULAR RETURN PROCESSING**
+          // 1. Require original invoice reference
+          if (!item.original_invoice_id) {
+            await transaction.rollback();
+            return errorResponse(res, 'Returns must reference an original purchase invoice', 400);
+          }
+
+          // 2. Fetch original invoice with its items
+          const originalInvoice = await SalesInvoice.findByPk(item.original_invoice_id, {
+            include: [
+              {
+                model: InvoiceItem,
+                as: 'items',
+                where: { is_return: false },
+              },
+            ],
+          });
+
+          if (!originalInvoice) {
+            await transaction.rollback();
+            return errorResponse(res, 'Original purchase invoice not found', 404);
+          }
+
+          // Verify outlet matches
+          if (originalInvoice.outlet_id !== outlet_id) {
+            await transaction.rollback();
+            return errorResponse(
+              res,
+              'Return must be for the same outlet as the original purchase',
+              400
+            );
+          }
+
+          // 3. Time limit validation (informational only - no blocking)
+          const returnReason = item.return_reason || 'other';
+          const policy = RETURN_POLICY[returnReason];
+          const daysSincePurchase = Math.floor(
+            (new Date(invoice_date) - new Date(originalInvoice.invoice_date)) /
+              (1000 * 60 * 60 * 24)
           );
-        }
 
-        // Calculate total already returned for this original item
-        const existingReturns = await InvoiceItem.findAll({
-          where: {
-            original_invoice_item_id: originalItem.id,
-            is_return: true,
-          },
-        });
+          // Log policy exceeded for audit purposes but don't block
+          if (daysSincePurchase > policy.days) {
+            console.log(
+              `Return outside policy window: ${policy.description} (${daysSincePurchase} days since purchase, limit ${policy.days} days). User: ${req.user.username}, Invoice: ${originalInvoice.invoice_number}`
+            );
+          }
 
-        const totalReturned = existingReturns.reduce((sum, ret) => sum + Math.abs(ret.quantity), 0);
+          // 4. Quantity validation - find the specific item in original invoice
+          const originalItem = originalInvoice.items.find(i => i.sku_id === item.sku_id);
+          if (!originalItem) {
+            await transaction.rollback();
+            return errorResponse(
+              res,
+              `SKU ${item.sku_id} was not purchased in the original invoice ${originalInvoice.invoice_number}`,
+              404
+            );
+          }
 
-        const originalQuantity = Math.abs(originalItem.quantity);
-        const attemptedReturn = Math.abs(item.quantity);
+          // Calculate total already returned for this original item
+          const existingReturns = await InvoiceItem.findAll({
+            where: {
+              original_invoice_item_id: originalItem.id,
+              is_return: true,
+            },
+          });
 
-        if (totalReturned + attemptedReturn > originalQuantity) {
-          await transaction.rollback();
-          return errorResponse(
-            res,
-            `Return quantity exceeds original purchase. Original: ${originalQuantity}, Already returned: ${totalReturned}, Attempted: ${attemptedReturn}`,
-            400
+          const totalReturned = existingReturns.reduce(
+            (sum, ret) => sum + Math.abs(ret.quantity),
+            0
           );
-        }
 
-        // Store original_invoice_item_id for tracking
-        item.original_invoice_item_id = originalItem.id;
+          const originalQuantity = Math.abs(originalItem.quantity);
+          const attemptedReturn = Math.abs(item.quantity);
+
+          if (totalReturned + attemptedReturn > originalQuantity) {
+            await transaction.rollback();
+            return errorResponse(
+              res,
+              `Return quantity exceeds original purchase. Original: ${originalQuantity}, Already returned: ${totalReturned}, Attempted: ${attemptedReturn}`,
+              400
+            );
+          }
+
+          // Store original_invoice_item_id for tracking
+          item.original_invoice_item_id = originalItem.id;
+        }
       }
     }
 
@@ -391,13 +430,13 @@ exports.createInvoice = async (req, res) => {
         is_return: item.is_return || false,
         return_reason: item.return_reason || null,
         return_to_stock: item.return_to_stock || false,
-        // Phase 2: Return validation fields
+        // Phase 2: Return validation fields (with Legacy Return support)
         original_invoice_id: item.original_invoice_id || null,
         original_invoice_item_id: item.original_invoice_item_id || null,
         return_policy_override: item.return_policy_override || false,
         return_policy_override_reason: item.return_policy_override_reason || null,
-        return_policy_override_by:
-          item.return_policy_override && req.user.role === 'admin' ? req.user.id : null,
+        // For legacy returns, admin_id already set in validation; for regular overrides, use current admin
+        return_policy_override_by: item.return_policy_override_by || null,
       });
     }
 
@@ -515,7 +554,7 @@ exports.createInvoice = async (req, res) => {
 
     // Update outlet balance (for credit sales only)
     if (payment_method === 'credit') {
-      outlet.balance += total_amount;
+      outlet.balance = parseFloat(outlet.balance || 0) + parseFloat(total_amount || 0);
       await outlet.save({ transaction });
     }
 

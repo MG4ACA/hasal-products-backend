@@ -195,3 +195,67 @@ exports.logout = async (req, res) => {
     });
   }
 };
+
+// Verify admin password for legacy return authorization
+exports.verifyAdminPassword = async (req, res) => {
+  try {
+    const { password } = req.body;
+
+    // Validation
+    if (!password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password is required',
+      });
+    }
+
+    // Get current user from token (authenticated middleware already verified)
+    const userId = req.user.id;
+
+    // Find user and check if admin
+    const user = await db.User.findByPk(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    // Check if user is admin
+    if (user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only administrators can authorize legacy returns',
+      });
+    }
+
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+
+    if (!isPasswordValid) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid password',
+      });
+    }
+
+    // Return success with admin info
+    return res.status(200).json({
+      success: true,
+      message: 'Admin authorization verified',
+      data: {
+        adminId: user.id,
+        adminName: user.name,
+        adminUsername: user.username,
+      },
+    });
+  } catch (error) {
+    console.error('Admin password verification error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Password verification failed',
+      error: error.message,
+    });
+  }
+};
