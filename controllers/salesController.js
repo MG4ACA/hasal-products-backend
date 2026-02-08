@@ -212,6 +212,7 @@ exports.createInvoice = async (req, res) => {
       check_number,
       check_date,
       notes,
+      invoice_discount_percent,
     } = req.body;
 
     // Validate outlet exists
@@ -440,7 +441,18 @@ exports.createInvoice = async (req, res) => {
       });
     }
 
-    const total_amount = subtotal - total_discount_amount;
+    const net_after_item_discounts = subtotal - total_discount_amount;
+
+    // Invoice-level discount (percentage applied to net amount after item discounts minus returns)
+    const invoiceDiscountPercent = parseFloat(invoice_discount_percent) || 0;
+    const returnsAmount = processedItems
+      .filter(i => i.is_return)
+      .reduce((sum, i) => sum + Math.abs(i.total_amount), 0);
+    const netForInvoiceDiscount = net_after_item_discounts - returnsAmount;
+    const invoice_discount_amount = netForInvoiceDiscount > 0
+      ? (netForInvoiceDiscount * invoiceDiscountPercent) / 100
+      : 0;
+    const total_amount = net_after_item_discounts - invoice_discount_amount;
 
     // **PHASE 1: Credit Limit Enforcement**
     let creditWarning = null;
@@ -507,8 +519,9 @@ exports.createInvoice = async (req, res) => {
         route_id: route_id || null,
         invoice_date,
         subtotal,
-        discount_percent: 0, // Line-level discounts only for now
+        discount_percent: invoiceDiscountPercent,
         discount_amount: total_discount_amount,
+        invoice_discount_amount,
         total_amount,
         payment_method,
         payment_status,

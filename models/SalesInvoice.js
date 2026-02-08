@@ -45,10 +45,17 @@ module.exports = (sequelize, DataTypes) => {
       discount_percent: {
         type: DataTypes.DECIMAL(5, 2),
         defaultValue: 0,
+        comment: 'Invoice-level discount percentage applied to net amount',
       },
       discount_amount: {
         type: DataTypes.DECIMAL(15, 2),
         defaultValue: 0,
+        comment: 'Sum of all item-level discount amounts',
+      },
+      invoice_discount_amount: {
+        type: DataTypes.DECIMAL(15, 2),
+        defaultValue: 0,
+        comment: 'Calculated invoice-level discount amount in currency',
       },
       total_amount: {
         type: DataTypes.DECIMAL(15, 2),
