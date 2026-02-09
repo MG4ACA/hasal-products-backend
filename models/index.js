@@ -171,4 +171,8 @@ db.SupplierPayment.belongsTo(db.User, { foreignKey: 'created_by', as: 'createdBy
 // StockAdjustment associations
 db.StockAdjustment.belongsTo(db.User, { foreignKey: 'created_by', as: 'createdBy' });
 
+// WastageRecord associations
+db.WastageRecord.belongsTo(db.User, { foreignKey: 'recorded_by', as: 'recordedBy' });
+db.User.hasMany(db.WastageRecord, { foreignKey: 'recorded_by', as: 'wastageRecords' });
+
 module.exports = db;

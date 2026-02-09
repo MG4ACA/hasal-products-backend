@@ -145,6 +145,10 @@ app.use('/api/expenses', expenseRoutes);
 const dashboardRoutes = require('./routes/dashboardRoutes');
 app.use('/api/dashboard', dashboardRoutes);
 
+// Wastage Routes
+const wastageRoutes = require('./routes/wastageRoutes');
+app.use('/api/wastage', wastageRoutes);
+
 // 404 handler (must be after all routes)
 app.use(notFound);
 
