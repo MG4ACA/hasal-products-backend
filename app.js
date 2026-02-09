@@ -137,6 +137,10 @@ app.use('/api/sales-invoices', salesRoutes);
 const paymentRoutes = require('./routes/paymentRoutes');
 app.use('/api/payments', paymentRoutes);
 
+// Expense Routes
+const expenseRoutes = require('./routes/expenseRoutes');
+app.use('/api/expenses', expenseRoutes);
+
 // Dashboard Routes
 const dashboardRoutes = require('./routes/dashboardRoutes');
 app.use('/api/dashboard', dashboardRoutes);
