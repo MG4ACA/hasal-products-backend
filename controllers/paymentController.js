@@ -505,25 +505,41 @@ exports.getOutstandingInvoices = async (req, res) => {
         outlet_id,
         payment_status: ['unpaid', 'partial'],
       },
-      attributes: [
-        'id',
-        'invoice_number',
-        'invoice_date',
-        'total_amount',
-        'paid_amount',
-        'payment_status',
-        [sequelize.literal('total_amount - COALESCE(paid_amount, 0)'), 'outstanding_amount'],
+      attributes: ['id', 'invoice_number', 'invoice_date', 'total_amount', 'payment_status'],
+      include: [
+        {
+          model: PaymentAllocation,
+          as: 'allocations',
+          attributes: ['allocated_amount'],
+          required: false,
+        },
       ],
       order: [['invoice_date', 'ASC']],
     });
 
-    const totalOutstanding = invoices.reduce(
-      (sum, inv) => sum + (parseFloat(inv.total_amount) - parseFloat(inv.paid_amount || 0)),
+    // Calculate outstanding amounts in JavaScript using the virtual field
+    const invoicesWithOutstanding = invoices.map(inv => {
+      const paidAmount = inv.paid_amount || 0; // Virtual field calculation
+      const outstandingAmount = parseFloat(inv.total_amount) - parseFloat(paidAmount);
+
+      return {
+        id: inv.id,
+        invoice_number: inv.invoice_number,
+        invoice_date: inv.invoice_date,
+        total_amount: parseFloat(inv.total_amount),
+        paid_amount: parseFloat(paidAmount),
+        payment_status: inv.payment_status,
+        outstanding_amount: outstandingAmount,
+      };
+    });
+
+    const totalOutstanding = invoicesWithOutstanding.reduce(
+      (sum, inv) => sum + inv.outstanding_amount,
       0
     );
 
     return successResponse(res, {
-      invoices,
+      invoices: invoicesWithOutstanding,
       total_outstanding: totalOutstanding,
     });
   } catch (error) {

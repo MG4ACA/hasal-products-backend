@@ -45,20 +45,56 @@ const seedDatabase = async () => {
       routes = await db.Route.bulkCreate([
         {
           code: 'RT001',
-          name: 'Colombo North Route',
-          description: 'Route covering North Colombo area',
+          name: 'Akuressa Territory',
+          description: 'Akuressa Territory route (514 outlets)',
           status: 'active',
         },
         {
           code: 'RT002',
-          name: 'Colombo South Route',
-          description: 'Route covering South Colombo area',
+          name: 'Galle 3 Territory',
+          description: 'Galle 3 Territory route (348 outlets)',
           status: 'active',
         },
         {
           code: 'RT003',
-          name: 'Suburbs Route',
-          description: 'Route covering suburban areas',
+          name: 'Baddegama Territory',
+          description: 'Baddegama Territory route (277 outlets)',
+          status: 'active',
+        },
+        {
+          code: 'RT004',
+          name: 'Galle 2 Territory',
+          description: 'Galle 2 Territory route (178 outlets)',
+          status: 'active',
+        },
+        {
+          code: 'RT005',
+          name: 'By Route',
+          description: 'By Route territory (131 outlets)',
+          status: 'active',
+        },
+        {
+          code: 'RT006',
+          name: 'Elpitiya Territory',
+          description: 'Elpitiya Territory route (90 outlets)',
+          status: 'active',
+        },
+        {
+          code: 'RT007',
+          name: 'Galle 1',
+          description: 'Galle 1 Territory route (68 outlets)',
+          status: 'active',
+        },
+        {
+          code: 'RT008',
+          name: 'Hikkaduwa',
+          description: 'Hikkaduwa Territory route (1 outlet)',
+          status: 'active',
+        },
+        {
+          code: 'RT009',
+          name: 'Hirimbura Galle 1',
+          description: 'Hirimbura Galle 1 Territory route (1 outlet)',
           status: 'active',
         },
       ]);
@@ -549,61 +585,6 @@ const seedDatabase = async () => {
         },
       ]);
       console.log(`✅ Created ${skus.length} product SKUs`);
-    }
-
-    // Seed Outlets (skip if already exist)
-    const outletCount = await db.Outlet.count();
-    let outlets;
-    if (outletCount > 0) {
-      console.log('⚠️  Outlets already exist, fetching existing outlets');
-      outlets = await db.Outlet.findAll();
-    } else {
-      console.log('Seeding Outlets...');
-      outlets = await db.Outlet.bulkCreate([
-        {
-          code: 'OUT001',
-          name: 'Colombo Mini Mart',
-          owner_name: 'Ravi Kumar',
-          phone: '0787654321',
-          email: 'colombo@minimart.lk',
-          address: '100 High Street, Colombo 7',
-          route_id: routes[0].id,
-          default_discount: 15,
-          credit_limit: 50000,
-          balance: 0,
-          payment_terms: 'credit',
-          status: 'active',
-        },
-        {
-          code: 'OUT002',
-          name: 'Kandy Central Store',
-          owner_name: 'Sunitha Patel',
-          phone: '0717654321',
-          email: 'kandy@centralstore.lk',
-          address: '200 Temple Road, Kandy',
-          route_id: routes[1].id,
-          default_discount: 10,
-          credit_limit: 30000,
-          balance: 0,
-          payment_terms: 'credit',
-          status: 'active',
-        },
-        {
-          code: 'OUT003',
-          name: 'Galle Shop',
-          owner_name: 'Ahmed Hassan',
-          phone: '0727654321',
-          email: 'galle@shop.lk',
-          address: '300 Beach Road, Galle',
-          route_id: routes[2].id,
-          default_discount: 20,
-          credit_limit: 20000,
-          balance: 0,
-          payment_terms: 'cash',
-          status: 'active',
-        },
-      ]);
-      console.log(`✅ Created ${outlets.length} outlets`);
     }
 
     // Seed Employees (skip if already exist)

@@ -1,15 +1,20 @@
 require('dotenv').config();
 const mysql = require('mysql2/promise');
+const seedDatabase = require('./seeders');
+const seedOutlets = require('./seed-outlets');
+const db = require('../models');
 
 /**
  * Initialize database - creates database if it doesn't exist
+ * Syncs models and seeds initial data (routes, users, suppliers, outlets)
  * This script should be run before starting the application
  */
 const initializeDatabase = async () => {
   try {
-    console.log('Starting database initialization...');
+    console.log('🚀 Starting database initialization...\n');
 
-    // Connect to MySQL without specifying a database
+    // Step 1: Create database if it doesn't exist
+    console.log('📦 Step 1: Checking/Creating database...');
     const connection = await mysql.createConnection({
       host: process.env.DB_HOST || 'localhost',
       port: process.env.DB_PORT || 3306,
@@ -17,7 +22,7 @@ const initializeDatabase = async () => {
       password: process.env.DB_PASSWORD || '',
     });
 
-    console.log('Connected to MySQL server');
+    console.log('✓ Connected to MySQL server');
 
     const dbName = process.env.DB_NAME || 'hasal_pos_dev';
 
@@ -38,9 +43,24 @@ const initializeDatabase = async () => {
     }
 
     await connection.end();
-    console.log('Database initialization completed successfully\n');
+
+    // Step 2: Sync database schema
+    console.log('\n📊 Step 2: Syncing database schema...');
+    await db.sequelize.sync({ alter: true });
+    console.log('✓ Database schema synchronized');
+
+    // Step 3: Seed core data (routes, users, suppliers)
+    console.log('\n🌱 Step 3: Seeding core data (routes, users, suppliers)...');
+    await seedDatabase();
+
+    // Step 4: Seed outlets from CSV
+    console.log('\n🏪 Step 4: Seeding outlets from CSV...');
+    await seedOutlets();
+
+    console.log('\n✅ Database initialization completed successfully!\n');
   } catch (error) {
-    console.error('Database initialization failed:', error.message);
+    console.error('❌ Database initialization failed:', error.message);
+    console.error(error);
     process.exit(1);
   }
 };
