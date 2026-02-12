@@ -41,6 +41,7 @@ exports.getAllRoutes = async (req, res) => {
       limit: parseInt(limit),
       offset: parseInt(offset),
       order: [['id', 'DESC']],
+      distinct: true,
       include: [
         {
           model: Outlet,

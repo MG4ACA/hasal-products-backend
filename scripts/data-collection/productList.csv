@@ -1,0 +1,142 @@
+product_code,product_name,product_category,product_barcode,product_description,sku_size,sku_unit,sku_barcode,sku_price,status
+PROD0005,Chili Powder,hasal products,,,50g,g,4796028020118,0.00,active
+PROD0005,Chili Powder,hasal products,,,100g,g,4796028020125,0.00,active
+PROD0005,Chili Powder,hasal products,,,250g,g,4796028020132,0.00,active
+PROD0005,Chili Powder,hasal products,,,500g,g,4796028020163,0.00,active
+PROD0005,Chili Powder,hasal products,,,1000g,g,4796028021665,0.00,active
+PROD0006,Chili Pieces,hasal products,,,50g,g,4796028020149,0.00,active
+PROD0006,Chili Pieces,hasal products,,,100g,g,4796028020156,0.00,active
+PROD0006,Chili Pieces,hasal products,,,250g,g,4796028020101,0.00,active
+PROD0006,Chili Pieces,hasal products,,,500g,g,4796028021658,0.00,active
+PROD0006,Chili Pieces,hasal products,,,1000g,g,4796028021771,0.00,active
+PROD0007,Curry Powder,hasal products,,,50g,g,4796028020248,0.00,active
+PROD0007,Curry Powder,hasal products,,,100g,g,4796028020231,0.00,active
+PROD0007,Curry Powder,hasal products,,,250g,g,4796028020255,0.00,active
+PROD0007,Curry Powder,hasal products,,,500g,g,,0.00,active
+PROD0008,Meat Curry,hasal products,,,50g,g,4796028020453,0.00,active
+PROD0008,Meat Curry,hasal products,,,100g,g,,0.00,active
+PROD0008,Meat Curry,hasal products,,,250g,g,4796028020477,0.00,active
+PROD0008,Meat Curry,hasal products,,,500g,g,,0.00,active
+PROD0009,R/Curry Powder,hasal products,,,50g,g,4796028020620,0.00,active
+PROD0009,R/Curry Powder,hasal products,,,100g,g,4796028020637,0.00,active
+PROD0009,R/Curry Powder,hasal products,,,250g,g,4796028021245,0.00,active
+PROD0009,R/Curry Powder,hasal products,,,500g,g,,0.00,active
+PROD0010,Turmeric Powder,hasal products,,,25g,g,4796028020811,0.00,active
+PROD0010,Turmeric Powder,hasal products,,,50g,g,4796028020828,0.00,active
+PROD0010,Turmeric Powder,hasal products,,,100g,g,4796028020798,0.00,active
+PROD0011,Pepper Powder,hasal products,,,50g,g,4796028020576,0.00,active
+PROD0011,Pepper Powder,hasal products,,,100g,g,4796028020583,0.00,active
+PROD0011,Pepper Powder,hasal products,,,250g,g,4796028020590,0.00,active
+PROD0011,Pepper Powder,hasal products,,,500g,g,,0.00,active
+PROD0011,Pepper Powder,hasal products,,,Card,Card,,0.00,active
+PROD0012,Pepper Seeds,hasal products,,,50g,g,4796028020606,0.00,active
+PROD0012,Pepper Seeds,hasal products,,,100g,g,4796028020613,0.00,active
+PROD0012,Pepper Seeds,hasal products,,,250g,g,,0.00,active
+PROD0012,Pepper Seeds,hasal products,,,Card,Card,1012,0.00,active
+PROD0013,Garam Masala,hasal products,,,50g,g,4796028020330,0.00,active
+PROD0013,Garam Masala,hasal products,,,100g,g,4796028020347,0.00,active
+PROD0014,Mustard Seeds,hasal products,,,50g,g,4796028020545,0.00,active
+PROD0014,Mustard Seeds,hasal products,,,100g,g,4796028020538,0.00,active
+PROD0015,Mustard Powder,hasal products,,,50g,g,4796028020514,0.00,active
+PROD0015,Mustard Powder,hasal products,,,100g,g,4796028020521,0.00,active
+PROD0016,Dill Seeds,hasal products,,,50g,g,4796028020293,0.00,active
+PROD0016,Dill Seeds,hasal products,,,100g,g,4796028020286,0.00,active
+PROD0017,R/Dill Seeds,hasal products,,,50g,g,4796028020644,0.00,active
+PROD0017,R/Dill Seeds,hasal products,,,100g,g,4796028020651,0.00,active
+PROD0018,Lime Pickle,hasal products,,,100g Packet,g,4796028020422,0.00,active
+PROD0018,Lime Pickle,hasal products,,,100g Cup,g,,0.00,active
+PROD0018,Lime Pickle,hasal products,,,250g Cup,g,,0.00,active
+PROD0019,Sweet Tamarind,hasal products,,,100g,g,,0.00,active
+PROD0019,Sweet Tamarind,hasal products,,,250g,g,,0.00,active
+PROD0019,Sweet Tamarind,hasal products,,,Card,Card,1020,0.00,active
+PROD0020,Tamarind Paste,hasal products,,,100g,g,4796028021528,0.00,active
+PROD0021,Maldive Fish Sambol,hasal products,,,40g,g,4796028021467,0.00,active
+PROD0022,Koonisso Sambol,hasal products,,,40g,g,,0.00,active
+PROD0022,Koonisso Sambol,hasal products,,,Card,Card,1030,0.00,active
+PROD0023,Gamboge Paste,hasal products,,,100g,g,4796028021009,0.00,active
+PROD0023,Gamboge Paste,hasal products,,,250g,g,4796028021016,0.00,active
+PROD0024,Salted Mango,hasal products,,,140g,g,4796028021238,0.00,active
+PROD0025,Barli Powder,hasal products,,,100g,g,,0.00,active
+PROD0026,Barli Powder Box,hasal products,,,100g,g,,0.00,active
+PROD0027,Cinnamon Powder,hasal products,,,25g,g,4796028021436,0.00,active
+PROD0027,Cinnamon Powder,hasal products,,,50g,g,4796028021498,0.00,active
+PROD0028,Nutmeg Powder,hasal products,,,25g,g,4796028021429,0.00,active
+PROD0029,Kurakkan Flour,hasal products,,,200g,g,4796028020866,0.00,active
+PROD0029,Kurakkan Flour,hasal products,,,400g,g,4796028021634,0.00,active
+PROD0030,Gram Flour,hasal products,,,200g,g,4796028020354,0.00,active
+PROD0030,Gram Flour,hasal products,,,500g,g,4796028021511,0.00,active
+PROD0030,Gram Flour,hasal products,,,1kg,g,,0.00,active
+PROD0031,Undu Flour,hasal products,,,150g,g,4796028020897,0.00,active
+PROD0032,Ginger Roll,hasal products,,,12 Pack,Pack,,0.00,active
+PROD0032,Ginger Roll,hasal products,,,24 Pack,Pack,,0.00,active
+PROD0033,Ginger Ball,hasal products,,,12 Pack,Pack,,0.00,active
+PROD0033,Ginger Ball,hasal products,,,50 Pack,Pack,,0.00,active
+PROD0034,Meat Curry Powder,hasal products,,,Card,Card,,0.00,active
+PROD0035,Umbalakada Sambol,hasal products,,,Card,Card,,0.00,active
+PROD0036,Candy,repacking,,,60g,g,4796028020071,0.00,active
+PROD0036,Candy,repacking,,,150g,g,,0.00,active
+PROD0036,Candy,repacking,,,Card,Card,1006,0.00,active
+PROD0037,Sultana,repacking,,,50g,g,4796028020743,0.00,active
+PROD0037,Sultana,repacking,,,100g,g,4796028021368,0.00,active
+PROD0037,Sultana,repacking,,,250g,g,4796028021603,0.00,active
+PROD0037,Sultana,repacking,,,Card,Card,1009,0.00,active
+PROD0038,Dates,repacking,,,150g,g,4796028020262,0.00,active
+PROD0038,Dates,repacking,,,300g,g,4796028020279,0.00,active
+PROD0039,Caraways,repacking,,,60g,g,4796028020088,0.00,active
+PROD0039,Caraways,repacking,,,Card,Card,1008,0.00,active
+PROD0040,Jujubes,repacking,,,50g,g,4796028020378,0.00,active
+PROD0041,Lozenge,repacking,,,50g,g,,0.00,active
+PROD0042,Orange Flavor,repacking,,,60g,g,4796028020569,0.00,active
+PROD0043,Appa Soda,repacking,,,50g,g,,0.00,active
+PROD0043,Appa Soda,repacking,,,Card,Card,1001,0.00,active
+PROD0044,Barli,repacking,,,100g,g,4796028020019,0.00,active
+PROD0045,Bread Crumb,repacking,,,1kg,g,4796028020040,0.00,active
+PROD0045,Bread Crumb,repacking,,,500g,g,4796028021405,0.00,active
+PROD0045,Bread Crumb,repacking,,,250g,g,4796028020026,0.00,active
+PROD0046,Cardamom 8G,repacking,,,Card,Card,4796028020095,0.00,active
+PROD0047,Cardamom 25G,repacking,,,Card,Card,,0.00,active
+PROD0048,Cinnamon,repacking,,,25g,g,4796028020170,0.00,active
+PROD0048,Cinnamon,repacking,,,50g,g,4796028021320,0.00,active
+PROD0048,Cinnamon,repacking,,,Card,Card,1014,0.00,active
+PROD0049,Cloves,repacking,,,20g,g,4796028020408,0.00,active
+PROD0049,Cloves,repacking,,,50g,g,,0.00,active
+PROD0049,Cloves,repacking,,,Card,Card,1003,0.00,active
+PROD0050,Coriander Seeds,repacking,,,100g,g,4796028020187,0.00,active
+PROD0050,Coriander Seeds,repacking,,,200g,g,4796028020194,0.00,active
+PROD0051,Cumin Seeds,repacking,,,25g,g,4796028020989,0.00,active
+PROD0051,Cumin Seeds,repacking,,,50g,g,4796028020217,0.00,active
+PROD0052,Curd Chili,repacking,,,40g,g,4796028020491,0.00,active
+PROD0052,Curd Chili,repacking,,,500g,g,4796028020507,0.00,active
+PROD0053,Dried Chili,repacking,,,100g,g,4796028020904,0.00,active
+PROD0053,Dried Chili,repacking,,,50g,g,4796028020903,0.00,active
+PROD0054,Dry Lotus,repacking,,,1 Unit,Unit,,0.00,active
+PROD0055,Gamboge,repacking,,,100g,g,,0.00,active
+PROD0055,Gamboge,repacking,,,250g,g,4796028020316,0.00,active
+PROD0055,Gamboge,repacking,,,Card,Card,1011,0.00,active
+PROD0056,Kollu Seeds,repacking,,,140g,g,,0.00,active
+PROD0057,Kurakkan Seeds,repacking,,,200g,g,4796028021535,0.00,active
+PROD0058,Nutmeg,repacking,,,20g,g,,0.00,active
+PROD0059,Pop Corn,repacking,,,150g,g,4796028020873,0.00,active
+PROD0060,Poppy Seeds,repacking,,,50g,g,4796028020996,0.00,active
+PROD0060,Poppy Seeds,repacking,,,100g,g,,0.00,active
+PROD0060,Poppy Seeds,repacking,,,200g,g,,0.00,active
+PROD0061,Red Rice Flakes,repacking,,,100g,g,4796028021306,0.00,active
+PROD0061,Red Rice Flakes,repacking,,,200g,g,4796028020361,0.00,active
+PROD0062,Sago,repacking,,,100g,g,4796028020675,0.00,active
+PROD0062,Sago,repacking,,,200g,g,4796028020682,0.00,active
+PROD0063,Semolina,repacking,,,200g,g,4796028020699,0.00,active
+PROD0063,Semolina,repacking,,,400g,g,4796028020705,0.00,active
+PROD0064,Sesame Seeds,repacking,,,50g,g,4796028021399,0.00,active
+PROD0064,Sesame Seeds,repacking,,,100g,g,4796028020712,0.00,active
+PROD0064,Sesame Seeds,repacking,,,250g,g,,0.00,active
+PROD0065,Sweet Cumin Seeds,repacking,,,25g,g,4796028020972,0.00,active
+PROD0065,Sweet Cumin Seeds,repacking,,,50g,g,4796028020767,0.00,active
+PROD0065,Sweet Cumin Seeds,repacking,,,100g,g,4796028020750,0.00,active
+PROD0066,Tamarind,repacking,,,100g,g,4796028020774,0.00,active
+PROD0066,Tamarind,repacking,,,Card,Card,,0.00,active
+PROD0066,Tamarind,repacking,,,250g,g,4796028020781,0.00,active
+PROD0067,Undu Seeds,repacking,,,100g,g,4796028021313,0.00,active
+PROD0068,Cardamom,repacking,,,Card S,Card,1005,0.00,active
+PROD0068,Cardamom,repacking,,,Card L,Card,1015,0.00,active
+PROD0069,Fish Feed,repacking,,,Card,Card,1002,0.00,active
+PROD0070,Maldive Fish,repacking,,,Card,Card,1004,0.00,active
