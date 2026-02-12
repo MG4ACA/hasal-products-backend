@@ -142,13 +142,11 @@ module.exports = (sequelize, DataTypes) => {
       updatedAt: 'updated_at',
       createdAt: 'created_at',
       indexes: [
-        { fields: ['invoice_number'] },
         { fields: ['outlet_id'] },
         { fields: ['sales_ref_id'] },
         { fields: ['route_id'] },
         { fields: ['invoice_date'] },
         { fields: ['payment_status'] },
-        { fields: ['check_number'] },
       ],
     }
   );

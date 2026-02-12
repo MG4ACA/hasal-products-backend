@@ -541,6 +541,47 @@ const seedDatabase = async () => {
       console.log(`✅ Created ${vehicles.length} vehicles`);
     }
 
+    // Seed Legacy Return Placeholder Invoice (skip if already exists)
+    const legacyInvoice = await db.SalesInvoice.findOne({
+      where: { invoice_number: 'LEGACY-SYSTEM-SETUP' },
+    });
+
+    if (legacyInvoice) {
+      console.log('⚠️  Legacy return placeholder invoice already exists');
+    } else {
+      console.log('Creating Legacy return placeholder invoice...');
+
+      // Get the first outlet to use as reference
+      const outlet = await db.Outlet.findOne({ order: [['id', 'ASC']] });
+
+      if (!outlet) {
+        console.log(
+          '⚠️  No outlets found. Legacy invoice will be created when outlets are seeded.'
+        );
+      } else {
+        // Use the first user (admin) as creator
+        const adminUser = await db.User.findOne({
+          where: { role: 'admin' },
+          order: [['id', 'ASC']],
+        });
+
+        await db.SalesInvoice.create({
+          invoice_number: 'LEGACY-SYSTEM-SETUP',
+          invoice_date: '2000-01-01', // Clearly historical date
+          outlet_id: outlet.id,
+          payment_method: 'cash',
+          payment_status: 'paid',
+          subtotal: 0,
+          discount_amount: 0,
+          total_amount: 0,
+          created_by: adminUser.id,
+          notes:
+            'System placeholder for pre-implementation returns. Do not modify or delete. This is a reference invoice for tracking returns from purchases made before the POS system went live.',
+        });
+        console.log('✅ Created LEGACY-SYSTEM-SETUP placeholder invoice');
+      }
+    }
+
     // Note: Recipes and Recipe Items can be seeded separately when needed
     // They have been removed to avoid dependencies on sample products
 

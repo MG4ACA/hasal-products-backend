@@ -191,7 +191,7 @@ exports.updateSupplier = async (req, res) => {
   }
 };
 
-// DELETE /api/suppliers/:id - Soft delete supplier
+// DELETE /api/suppliers/:id - Delete supplier (hard delete if no POs, soft delete otherwise)
 exports.deleteSupplier = async (req, res) => {
   try {
     const { id } = req.params;
@@ -211,10 +211,31 @@ exports.deleteSupplier = async (req, res) => {
       );
     }
 
-    // Soft delete by setting status to inactive
-    await supplier.update({ status: 'inactive' });
+    // Check if supplier has any purchase orders
+    const purchaseOrderCount = await PurchaseOrder.count({
+      where: { supplier_id: id },
+    });
 
-    return successResponse(res, { message: 'Supplier deleted successfully' });
+    // Check if supplier has any payments
+    const paymentCount = await SupplierPayment.count({
+      where: { supplier_id: id },
+    });
+
+    if (purchaseOrderCount > 0 || paymentCount > 0) {
+      // Has purchase orders or payments - soft delete by setting status to inactive
+      await supplier.update({ status: 'inactive' });
+      return successResponse(res, {
+        message: 'Supplier has related purchase orders or payments. Status changed to inactive.',
+        deleted: false,
+      });
+    } else {
+      // No purchase orders or payments - hard delete
+      await supplier.destroy();
+      return successResponse(res, {
+        message: 'Supplier deleted successfully',
+        deleted: true,
+      });
+    }
   } catch (error) {
     console.error('Delete supplier error:', error);
     return errorResponse(res, 'Failed to delete supplier', 500);

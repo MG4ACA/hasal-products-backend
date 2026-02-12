@@ -7,21 +7,6 @@ const seed = async () => {
   try {
     console.log('🌱 Starting database seeding...');
 
-    // Clean up orphaned records before schema sync
-    console.log('🧹 Cleaning up orphaned records...');
-    try {
-      // Delete orphaned recipe items (recipes were removed from seeding)
-      await db.sequelize.query(
-        'DELETE FROM recipe_items WHERE recipe_id NOT IN (SELECT id FROM recipes)',
-        {
-          type: db.sequelize.QueryTypes.DELETE,
-        }
-      );
-      console.log('✅ Cleaned up orphaned recipe items');
-    } catch (cleanupError) {
-      console.log('⚠️  Cleanup warning (safe to ignore):', cleanupError.message);
-    }
-
     // Use alter: true to safely sync schema without data loss
     // Seeders.js has duplicate protection - won't re-seed if data exists
     await db.sequelize.sync({ alter: true });
