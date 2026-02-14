@@ -65,6 +65,7 @@ exports.getAllWastageRecords = async (req, res) => {
         ['wastage_date', 'DESC'],
         ['created_at', 'DESC'],
       ],
+      distinct: true,
       include: [
         {
           model: User,

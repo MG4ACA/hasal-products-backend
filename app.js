@@ -1,37 +1,18 @@
 const express = require('express');
 const cors = require('cors');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
-const { initializeDatabase: createDatabase } = require('./scripts/initializeDatabase');
-const seedDatabase = require('./scripts/seeders');
 const db = require('./models');
 
 const app = express();
 
-// Initialize database
+// Initialize database - just authenticate connection
 const initializeDatabase = async () => {
   try {
-    const isDevelopment = process.env.NODE_ENV === 'development';
-
-    if (isDevelopment) {
-      // Development: Full setup
-      console.log('Phase 1: Creating database if needed...');
-      await createDatabase();
-
-      console.log('Phase 2: Syncing database schema...');
-      await db.sequelize.sync({ alter: true });
-      console.log('✓ Database synchronized successfully');
-
-      console.log('Phase 3: Checking if data needs to be seeded...');
-      await seedDatabase();
-      console.log('✓ Database seeding completed');
-    } else {
-      // Production: Just authenticate
-      console.log('Authenticating database connection...');
-      await db.sequelize.authenticate();
-      console.log('✓ Database connection authenticated');
-    }
+    console.log('Authenticating database connection...');
+    await db.sequelize.authenticate();
+    console.log('✓ Database connection authenticated');
   } catch (error) {
-    console.error('Database initialization error:', error);
+    console.error('Database connection error:', error);
     throw error;
   }
 };

@@ -34,6 +34,7 @@ exports.getAllSupplierPayments = async (req, res) => {
 
     const { count, rows } = await SupplierPayment.findAndCountAll({
       where,
+      distinct: true,
       include: [
         {
           model: Supplier,
@@ -74,6 +75,7 @@ exports.getSupplierPayments = async (req, res) => {
 
     const { count, rows } = await SupplierPayment.findAndCountAll({
       where: { supplier_id: supplierId },
+      distinct: true,
       include: [
         {
           model: User,

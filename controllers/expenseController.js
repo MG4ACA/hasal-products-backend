@@ -41,6 +41,7 @@ exports.getAllExpenses = async (req, res) => {
 
     const { count, rows } = await Expense.findAndCountAll({
       where,
+      distinct: true,
       include: [
         {
           model: Vehicle,
@@ -327,6 +328,28 @@ exports.getMonthlySummary = async (req, res) => {
       },
     });
 
+    // Get expenses by vehicle (only vehicles with expenses in the date range)
+    const expensesByVehicle = await Expense.findAll({
+      where: {
+        ...where,
+        vehicle_id: { [Op.ne]: null },
+      },
+      attributes: [
+        'vehicle_id',
+        [require('sequelize').fn('SUM', require('sequelize').col('amount')), 'total_amount'],
+        [require('sequelize').fn('COUNT', require('sequelize').col('Expense.id')), 'count'],
+      ],
+      include: [
+        {
+          model: Vehicle,
+          as: 'vehicle',
+          attributes: ['id', 'code', 'name', 'registration_number'],
+        },
+      ],
+      group: ['vehicle_id', 'vehicle.id'],
+      raw: false,
+    });
+
     return successResponse(res, {
       period: where.expense_date,
       summary: {
@@ -338,6 +361,13 @@ exports.getMonthlySummary = async (req, res) => {
         category: item.category,
         total_amount: parseFloat(item.total_amount).toFixed(2),
         count: parseInt(item.count),
+      })),
+      by_vehicle: expensesByVehicle.map(item => ({
+        vehicle_id: item.vehicle_id,
+        vehicle_name: item.vehicle ? `${item.vehicle.code} - ${item.vehicle.name}` : 'Unknown',
+        vehicle_registration: item.vehicle ? item.vehicle.registration_number : null,
+        total_amount: parseFloat(item.dataValues.total_amount).toFixed(2),
+        count: parseInt(item.dataValues.count),
       })),
     });
   } catch (error) {

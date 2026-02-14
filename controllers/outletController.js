@@ -18,7 +18,15 @@ async function generateOutletCode() {
 // Get all outlets with pagination and search
 exports.getAllOutlets = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search = '', status = '', route_id = '' } = req.query;
+    const {
+      page = 1,
+      limit = 10,
+      search = '',
+      status = '',
+      route_id = '',
+      sortField = 'id',
+      sortOrder = 'DESC',
+    } = req.query;
     const offset = (page - 1) * limit;
 
     const where = {};
@@ -44,11 +52,25 @@ exports.getAllOutlets = async (req, res) => {
       where.route_id = route_id;
     }
 
+    // Validate and set sort order
+    const validSortFields = [
+      'id',
+      'code',
+      'name',
+      'owner_name',
+      'payment_terms',
+      'balance',
+      'status',
+    ];
+    const field = validSortFields.includes(sortField) ? sortField : 'id';
+    const order = sortOrder.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+
     const { count, rows } = await Outlet.findAndCountAll({
       where,
       limit: parseInt(limit),
       offset: parseInt(offset),
-      order: [['id', 'DESC']],
+      order: [[field, order]],
+      distinct: true,
       include: [
         {
           model: Route,

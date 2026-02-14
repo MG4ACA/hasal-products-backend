@@ -66,6 +66,7 @@ exports.getAllPayments = async (req, res) => {
 
     const { count, rows: payments } = await Payment.findAndCountAll({
       where,
+      distinct: true,
       include: [
         {
           model: Outlet,

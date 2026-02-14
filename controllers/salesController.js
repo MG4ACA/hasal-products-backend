@@ -89,6 +89,7 @@ exports.getAllInvoices = async (req, res) => {
       where,
       limit: parseInt(limit),
       offset: parseInt(offset),
+      distinct: true,
       include: [
         {
           model: Outlet,
@@ -449,9 +450,8 @@ exports.createInvoice = async (req, res) => {
       .filter(i => i.is_return)
       .reduce((sum, i) => sum + Math.abs(i.total_amount), 0);
     const netForInvoiceDiscount = net_after_item_discounts - returnsAmount;
-    const invoice_discount_amount = netForInvoiceDiscount > 0
-      ? (netForInvoiceDiscount * invoiceDiscountPercent) / 100
-      : 0;
+    const invoice_discount_amount =
+      netForInvoiceDiscount > 0 ? (netForInvoiceDiscount * invoiceDiscountPercent) / 100 : 0;
     const total_amount = net_after_item_discounts - invoice_discount_amount;
 
     // **PHASE 1: Credit Limit Enforcement**
