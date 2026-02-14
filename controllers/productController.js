@@ -289,7 +289,7 @@ exports.addSku = async (req, res) => {
 exports.updateSku = async (req, res) => {
   try {
     const { productId, skuId } = req.params;
-    const { size, unit, barcode, price, status } = req.body;
+    const { size, unit, barcode, price, status, current_stock } = req.body;
 
     const sku = await ProductSku.findOne({
       where: { id: skuId, product_id: productId },
@@ -309,14 +309,21 @@ exports.updateSku = async (req, res) => {
       }
     }
 
-    // Update SKU
-    await sku.update({
+    // Update SKU (including current_stock if provided)
+    const updateData = {
       size: size || sku.size,
       unit: unit || sku.unit,
       barcode: barcode || sku.barcode,
       price: price || sku.price,
       status: status || sku.status,
-    });
+    };
+
+    // Allow updating current_stock if provided (useful for testing/manual adjustments)
+    if (typeof current_stock !== 'undefined') {
+      updateData.current_stock = current_stock;
+    }
+
+    await sku.update(updateData);
 
     return successResponse(res, sku);
   } catch (error) {

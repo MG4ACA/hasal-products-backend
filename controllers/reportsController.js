@@ -486,7 +486,8 @@ exports.getOutletBalanceReport = async (req, res) => {
         current_balance: currentBalance,
         credit_limit: creditLimit,
         available_credit: creditLimit - currentBalance,
-        credit_utilization: creditLimit > 0 ? ((currentBalance / creditLimit) * 100).toFixed(2) : 0,
+        credit_utilization:
+          creditLimit > 0 ? parseFloat(((currentBalance / creditLimit) * 100).toFixed(2)) : 0,
         aging,
         outstanding_invoices: outstandingInvoices.length,
       });
@@ -872,10 +873,12 @@ exports.getProductionReport = async (req, res) => {
       total_waste_cost: reportData.reduce((sum, r) => sum + r.waste_cost, 0),
       average_efficiency:
         reportData.length > 0
-          ? (
-              reportData.reduce((sum, r) => sum + parseFloat(r.efficiency_percentage), 0) /
-              reportData.length
-            ).toFixed(2)
+          ? parseFloat(
+              (
+                reportData.reduce((sum, r) => sum + parseFloat(r.efficiency_percentage), 0) /
+                reportData.length
+              ).toFixed(2)
+            )
           : 0,
       total_wastage_records: wastageRecords.length,
       total_wastage_cost: wastageRecords.reduce(
