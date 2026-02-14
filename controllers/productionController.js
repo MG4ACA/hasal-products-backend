@@ -1016,6 +1016,10 @@ exports.getEfficiencyReport = async (req, res) => {
               report.reduce((sum, r) => sum + parseFloat(r.yield_efficiency), 0) / report.length
             ).toFixed(2)
           : '0.00',
+      total_expected: report
+        .reduce((sum, r) => sum + parseFloat(r.expected_quantity), 0)
+        .toFixed(2),
+      total_actual: report.reduce((sum, r) => sum + parseFloat(r.actual_quantity), 0).toFixed(2),
       total_waste: report.reduce((sum, r) => sum + parseFloat(r.waste_quantity), 0).toFixed(2),
     };
 

@@ -7,6 +7,10 @@ const roleCheck = require('../middleware/roleCheck');
 // All routes require authentication
 router.use(authMiddleware);
 
+// Waste and efficiency reports (must come before /:id to avoid conflicts)
+router.get('/waste-cost-report', productionController.getWasteCostReport);
+router.get('/efficiency-report', productionController.getEfficiencyReport);
+
 // Production run routes
 router.get('/', productionController.getAllProductionRuns);
 router.get('/:id', productionController.getProductionRunById);
@@ -38,9 +42,5 @@ router.post(
 
 // Check material availability
 router.get('/:id/check-materials', productionController.checkMaterialAvailability);
-
-// Waste and efficiency reports
-router.get('/waste-cost-report', productionController.getWasteCostReport);
-router.get('/efficiency-report', productionController.getEfficiencyReport);
 
 module.exports = router;

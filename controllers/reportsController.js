@@ -5,15 +5,19 @@ const {
   Payment,
   Outlet,
   Route,
+  Product,
   ProductSku,
   PurchaseOrder,
   SupplierPayment,
   Supplier,
   RawMaterial,
+  RawMaterialBatch,
   ProductionRun,
-  Batch,
+  ProductionOutput,
+  ProductionMaterial,
   Recipe,
-  Wastage,
+  WastageRecord,
+  User,
 } = require('../models');
 const { successResponse, errorResponse } = require('../utils/response');
 
@@ -340,12 +344,7 @@ exports.getSupplierPaymentReport = async (req, res) => {
         {
           model: Supplier,
           as: 'supplier',
-          attributes: ['supplier_id', 'supplier_name'],
-        },
-        {
-          model: PurchaseOrder,
-          as: 'purchase_order',
-          attributes: ['po_number', 'total_cost', 'order_date'],
+          attributes: ['id', 'name', 'code'],
         },
       ],
     });
@@ -367,7 +366,7 @@ exports.getSupplierPaymentReport = async (req, res) => {
         {
           model: Supplier,
           as: 'supplier',
-          attributes: ['supplier_id', 'supplier_name'],
+          attributes: ['id', 'name', 'code'],
         },
       ],
     });
@@ -394,7 +393,7 @@ exports.getSupplierPaymentReport = async (req, res) => {
       if (!bySupplier[suppKey]) {
         bySupplier[suppKey] = {
           supplier_id: po.supplier_id,
-          supplier_name: po.supplier?.supplier_name || 'Unknown',
+          supplier_name: po.supplier?.name || 'Unknown',
           purchased: 0,
           paid: 0,
           outstanding: 0,
@@ -599,47 +598,71 @@ exports.getCheckStatusReport = async (req, res) => {
  */
 exports.getInventoryReport = async (req, res) => {
   try {
-    // Get raw materials inventory
+    // Get raw materials with their batches
     const rawMaterials = await RawMaterial.findAll({
-      attributes: [
-        'raw_material_id',
-        'material_name',
-        'current_stock',
-        'unit',
-        'unit_cost',
-        'reorder_level',
-        'supplier_id',
-      ],
+      where: { status: 'active' },
+      attributes: ['id', 'code', 'name', 'unit', 'reorder_level'],
       include: [
         {
-          model: Supplier,
-          as: 'supplier',
-          attributes: ['supplier_name'],
+          model: RawMaterialBatch,
+          as: 'batches',
+          attributes: ['id', 'batch_number', 'quantity', 'unit_cost', 'supplier_id'],
+          include: [
+            {
+              model: Supplier,
+              as: 'supplier',
+              attributes: ['id', 'name'],
+            },
+          ],
         },
       ],
     });
 
     const rawMaterialsData = rawMaterials.map(rm => {
-      const currentStock = parseFloat(rm.current_stock) || 0;
-      const unitCost = parseFloat(rm.unit_cost) || 0;
+      // Calculate total stock from all batches
+      const totalStock = rm.batches.reduce(
+        (sum, batch) => sum + parseFloat(batch.quantity || 0),
+        0
+      );
+
+      // Calculate weighted average cost
+      let totalValue = 0;
+      rm.batches.forEach(batch => {
+        totalValue += parseFloat(batch.quantity || 0) * parseFloat(batch.unit_cost || 0);
+      });
+      const avgCost = totalStock > 0 ? totalValue / totalStock : 0;
+
       const reorderLevel = parseFloat(rm.reorder_level) || 0;
 
+      // Get unique suppliers
+      const suppliers = [...new Set(rm.batches.map(b => b.supplier?.name).filter(Boolean))];
+
       return {
-        material_id: rm.raw_material_id,
-        material_name: rm.material_name,
-        current_stock: currentStock,
+        material_id: rm.id,
+        material_code: rm.code,
+        material_name: rm.name,
+        current_stock: totalStock,
         unit: rm.unit,
-        unit_cost: unitCost,
-        total_value: currentStock * unitCost,
+        average_cost: avgCost,
+        total_value: totalValue,
         reorder_level: reorderLevel,
-        is_low_stock: currentStock <= reorderLevel,
-        supplier_name: rm.supplier?.supplier_name || 'Unknown',
+        is_low_stock: totalStock <= reorderLevel,
+        suppliers: suppliers.join(', ') || 'Unknown',
+        batch_count: rm.batches.length,
       };
     });
 
     // Get finished goods inventory
     const finishedGoods = await ProductSku.findAll({
-      attributes: ['id', 'size', 'unit', 'current_stock', 'price', 'average_cost'],
+      where: { status: 'active' },
+      attributes: ['id', 'size', 'unit', 'current_stock', 'price', 'average_cost', 'product_id'],
+      include: [
+        {
+          model: Product,
+          as: 'product',
+          attributes: ['id', 'code', 'name'],
+        },
+      ],
     });
 
     const finishedGoodsData = finishedGoods.map(sku => {
@@ -649,6 +672,8 @@ exports.getInventoryReport = async (req, res) => {
 
       return {
         sku_id: sku.id,
+        product_code: sku.product?.code || '',
+        product_name: sku.product?.name || '',
         size: sku.size,
         unit: sku.unit,
         current_stock: currentStock,
@@ -656,6 +681,7 @@ exports.getInventoryReport = async (req, res) => {
         average_cost: costPerUnit,
         total_value: currentStock * costPerUnit,
         potential_revenue: currentStock * unitPrice,
+        potential_profit: currentStock * (unitPrice - costPerUnit),
       };
     });
 
@@ -670,6 +696,7 @@ exports.getInventoryReport = async (req, res) => {
         count: finishedGoodsData.length,
         total_value: finishedGoodsData.reduce((sum, fg) => sum + fg.total_value, 0),
         potential_revenue: finishedGoodsData.reduce((sum, fg) => sum + fg.potential_revenue, 0),
+        potential_profit: finishedGoodsData.reduce((sum, fg) => sum + fg.potential_profit, 0),
       },
       grand_total: 0,
     };
@@ -697,7 +724,7 @@ exports.getInventoryReport = async (req, res) => {
  */
 exports.getProductionReport = async (req, res) => {
   try {
-    const { date_from, date_to, recipe_id } = req.query;
+    const { date_from, date_to, recipe_id, product_id } = req.query;
 
     const whereClause = {};
     if (date_from) whereClause.production_date = { [Op.gte]: date_from };
@@ -715,79 +742,179 @@ exports.getProductionReport = async (req, res) => {
         {
           model: Recipe,
           as: 'recipe',
-          attributes: ['recipe_name', 'expected_yield', 'expected_yield_unit'],
+          attributes: ['id', 'code', 'name', 'expected_yield', 'yield_unit'],
+          include: product_id
+            ? [
+                {
+                  model: Product,
+                  as: 'product',
+                  where: { id: product_id },
+                  attributes: ['id', 'code', 'name'],
+                },
+              ]
+            : [
+                {
+                  model: Product,
+                  as: 'product',
+                  required: false,
+                  attributes: ['id', 'code', 'name'],
+                },
+              ],
         },
         {
-          model: Batch,
-          as: 'batch',
-          attributes: ['batch_number', 'quantity_produced'],
-        },
-      ],
-    });
-
-    // Get wastage data
-    const wastageData = await Wastage.findAll({
-      where: whereClause,
-      include: [
-        {
-          model: ProductionRun,
-          as: 'production_run',
+          model: ProductionOutput,
+          as: 'outputs',
+          attributes: [
+            'id',
+            'sku_id',
+            'quantity_produced',
+            'batch_number',
+            'unit_cost',
+            'total_cost',
+            'waste_cost',
+          ],
           include: [
             {
-              model: Recipe,
-              as: 'recipe',
-              attributes: ['recipe_name'],
+              model: ProductSku,
+              as: 'sku',
+              attributes: ['id', 'size', 'unit', 'price'],
             },
           ],
         },
+        {
+          model: User,
+          as: 'producedBy',
+          attributes: ['id', 'full_name', 'email', 'username'],
+        },
       ],
+      order: [['production_date', 'DESC']],
+    });
+
+    // Get wastage data for the same period
+    const wastageWhere = {};
+    if (date_from) wastageWhere.wastage_date = { [Op.gte]: date_from };
+    if (date_to) {
+      wastageWhere.wastage_date = {
+        ...wastageWhere.wastage_date,
+        [Op.lte]: date_to,
+      };
+    }
+    wastageWhere.wastage_type = 'production';
+
+    const wastageRecords = await WastageRecord.findAll({
+      where: wastageWhere,
     });
 
     const reportData = productionRuns.map(run => {
-      const actualYield = parseFloat(run.actual_yield) || 0;
-      const expectedYield = parseFloat(run.recipe?.expected_yield) || 0;
-      const totalCost = parseFloat(run.total_cost) || 0;
+      const actualQuantity = parseFloat(run.actual_quantity) || 0;
+      const expectedQuantity = parseFloat(run.expected_quantity) || 0;
+      const wasteQuantity = parseFloat(run.waste_quantity) || 0;
 
-      const efficiency = expectedYield > 0 ? ((actualYield / expectedYield) * 100).toFixed(2) : 0;
+      let efficiency = 0;
+      if (expectedQuantity > 0) {
+        efficiency = ((actualQuantity / expectedQuantity) * 100).toFixed(2);
+      } else if (actualQuantity > 0) {
+        efficiency = 100;
+      }
 
-      // Find related wastage
-      const runWastage = wastageData.filter(w => w.production_run_id === run.production_run_id);
-      const wasteCost = runWastage.reduce((sum, w) => sum + (parseFloat(w.cost_impact) || 0), 0);
+      // Calculate total costs from outputs
+      const totalCost = run.outputs.reduce(
+        (sum, output) => sum + (parseFloat(output.total_cost) || 0),
+        0
+      );
+      const wasteCost = run.outputs.reduce(
+        (sum, output) => sum + (parseFloat(output.waste_cost) || 0),
+        0
+      );
+
+      // Get output details
+      const outputs = run.outputs.map(output => ({
+        sku_id: output.sku_id,
+        size: output.sku?.size || '',
+        quantity: parseFloat(output.quantity_produced) || 0,
+        unit: output.sku?.unit || '',
+        batch_number: output.batch_number,
+        unit_cost: parseFloat(output.unit_cost) || 0,
+        total_cost: parseFloat(output.total_cost) || 0,
+      }));
 
       return {
-        production_run_id: run.production_run_id,
+        production_run_id: run.id,
         production_date: run.production_date,
-        recipe_name: run.recipe?.recipe_name || 'Unknown',
-        batch_number: run.batch?.batch_number || '',
-        expected_yield: expectedYield,
-        actual_yield: actualYield,
+        batch_number: run.batch_number,
+        recipe_id: run.recipe?.id,
+        recipe_code: run.recipe?.code || '',
+        recipe_name: run.recipe?.name || 'Unknown',
+        product_name: run.recipe?.product?.name || '',
+        expected_quantity: expectedQuantity,
+        actual_quantity: actualQuantity,
+        waste_quantity: wasteQuantity,
+        yield_efficiency: parseFloat(run.yield_efficiency) || parseFloat(efficiency),
         efficiency_percentage: efficiency,
         total_cost: totalCost,
         waste_cost: wasteCost,
         net_cost: totalCost + wasteCost,
+        status: run.status,
+        produced_by: run.producedBy?.full_name || '',
+        outputs: outputs,
+        notes: run.notes || '',
+        waste_reason: run.waste_reason || '',
       };
     });
 
     // Calculate summary
     const summary = {
       total_production_runs: reportData.length,
+      completed_runs: reportData.filter(r => r.status === 'completed').length,
+      total_quantity_produced: reportData.reduce((sum, r) => sum + r.actual_quantity, 0),
+      total_waste_quantity: reportData.reduce((sum, r) => sum + r.waste_quantity, 0),
       total_cost: reportData.reduce((sum, r) => sum + r.total_cost, 0),
       total_waste_cost: reportData.reduce((sum, r) => sum + r.waste_cost, 0),
-      average_efficiency: reportData.length
-        ? (
-            reportData.reduce((sum, r) => sum + parseFloat(r.efficiency_percentage), 0) /
-            reportData.length
-          ).toFixed(2)
-        : 0,
-      total_wastage_incidents: wastageData.length,
+      average_efficiency:
+        reportData.length > 0
+          ? (
+              reportData.reduce((sum, r) => sum + parseFloat(r.efficiency_percentage), 0) /
+              reportData.length
+            ).toFixed(2)
+          : 0,
+      total_wastage_records: wastageRecords.length,
+      total_wastage_cost: wastageRecords.reduce(
+        (sum, w) => sum + (parseFloat(w.total_cost) || 0),
+        0
+      ),
     };
+
+    // Group wastage by type
+    const wastageByType = {};
+    wastageRecords.forEach(record => {
+      const type = record.wastage_type;
+      if (!wastageByType[type]) {
+        wastageByType[type] = {
+          type: type,
+          count: 0,
+          total_cost: 0,
+        };
+      }
+      wastageByType[type].count++;
+      wastageByType[type].total_cost += parseFloat(record.total_cost) || 0;
+    });
 
     return successResponse(
       res,
       {
         summary,
         production_runs: reportData,
-        wastage_details: wastageData.slice(0, 50),
+        wastage_by_type: Object.values(wastageByType),
+        recent_wastage: wastageRecords.slice(0, 20).map(w => ({
+          id: w.id,
+          date: w.wastage_date,
+          type: w.wastage_type,
+          item_name: w.item_name,
+          quantity: parseFloat(w.quantity),
+          unit: w.unit,
+          total_cost: parseFloat(w.total_cost) || 0,
+          reason: w.reason,
+        })),
       },
       'Production report generated successfully'
     );

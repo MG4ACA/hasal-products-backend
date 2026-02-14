@@ -7,6 +7,9 @@ const roleCheck = require('../middleware/roleCheck');
 // All routes require authentication
 router.use(authMiddleware);
 
+// Profit routes (must be before /:id to avoid conflict)
+router.get('/profit-summary', productController.getProfitSummary);
+
 // Product routes
 router.get('/', productController.getAllProducts);
 router.get('/:id', productController.getProductById);
@@ -22,8 +25,7 @@ router.delete('/:productId/skus/:skuId', roleCheck(['admin']), productController
 // Stock routes
 router.get('/:id/stock', productController.getProductStock);
 
-// Profit routes
-router.get('/profit-summary', productController.getProfitSummary);
+// SKU Profit route
 router.get('/:productId/skus/:skuId/profit', productController.getSkuProfit);
 
 module.exports = router;

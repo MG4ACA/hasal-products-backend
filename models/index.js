@@ -136,6 +136,7 @@ db.ProductionOutput.belongsTo(db.ProductSku, { foreignKey: 'sku_id', as: 'sku' }
 db.PurchaseOrder.belongsTo(db.Supplier, { foreignKey: 'supplier_id', as: 'supplier' });
 db.PurchaseOrder.belongsTo(db.User, { foreignKey: 'created_by', as: 'createdBy' });
 db.PurchaseOrder.hasMany(db.PoItem, { foreignKey: 'po_id', as: 'items' });
+db.PurchaseOrder.hasMany(db.SupplierPayment, { foreignKey: 'purchase_order_id', as: 'payments' });
 
 // PoItem associations
 db.PoItem.belongsTo(db.PurchaseOrder, { foreignKey: 'po_id', as: 'purchaseOrder' });
@@ -166,6 +167,10 @@ db.SalesInvoice.hasMany(db.PaymentAllocation, { foreignKey: 'invoice_id', as: 'a
 
 // SupplierPayment associations
 db.SupplierPayment.belongsTo(db.Supplier, { foreignKey: 'supplier_id', as: 'supplier' });
+db.SupplierPayment.belongsTo(db.PurchaseOrder, {
+  foreignKey: 'purchase_order_id',
+  as: 'purchaseOrder',
+});
 db.SupplierPayment.belongsTo(db.User, { foreignKey: 'created_by', as: 'createdBy' });
 
 // StockAdjustment associations

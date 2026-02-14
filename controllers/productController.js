@@ -516,3 +516,56 @@ exports.getProfitSummary = async (req, res) => {
     return errorResponse(res, 'Failed to calculate profit summary', 500);
   }
 };
+
+/**
+ * Get SKU profit analysis
+ * GET /api/products/:productId/skus/:skuId/profit
+ */
+exports.getSkuProfit = async (req, res) => {
+  try {
+    const { productId, skuId } = req.params;
+
+    const sku = await ProductSku.findOne({
+      where: { id: skuId, product_id: productId },
+      include: [
+        {
+          model: Product,
+          as: 'product',
+          attributes: ['id', 'code', 'name'],
+        },
+      ],
+    });
+
+    if (!sku) {
+      return errorResponse(res, 'SKU not found', 404);
+    }
+
+    const sellingPrice = parseFloat(sku.price || 0);
+    const avgCost = parseFloat(sku.average_cost || 0);
+    const profit = sellingPrice - avgCost;
+    const profitMargin = sellingPrice > 0 ? (profit / sellingPrice) * 100 : 0;
+    const stock = parseFloat(sku.current_stock || 0);
+
+    const profitAnalysis = {
+      product_id: sku.product.id,
+      product_code: sku.product.code,
+      product_name: sku.product.name,
+      sku_id: sku.id,
+      size: sku.size,
+      unit: sku.unit,
+      barcode: sku.barcode,
+      selling_price: sellingPrice.toFixed(2),
+      average_cost: avgCost.toFixed(2),
+      profit_per_unit: profit.toFixed(2),
+      profit_margin_percent: profitMargin.toFixed(2),
+      current_stock: stock,
+      inventory_value: (stock * avgCost).toFixed(2),
+      potential_profit: (stock * profit).toFixed(2),
+    };
+
+    return successResponse(res, profitAnalysis);
+  } catch (error) {
+    console.error('Error calculating SKU profit:', error);
+    return errorResponse(res, 'Failed to calculate SKU profit', 500);
+  }
+};
