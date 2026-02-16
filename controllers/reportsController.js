@@ -55,6 +55,13 @@ exports.getSalesReport = async (req, res) => {
               model: ProductSku,
               as: 'sku',
               attributes: ['id', 'size', 'unit', 'price', 'product_id'],
+              include: [
+                {
+                  model: Product,
+                  as: 'product',
+                  attributes: ['id', 'code', 'name'],
+                },
+              ],
             },
           ],
         },
@@ -159,9 +166,10 @@ exports.getSalesReport = async (req, res) => {
         if (!salesByProduct[productKey]) {
           salesByProduct[productKey] = {
             sku_id: item.sku_id,
+            sku_name: item.sku?.product?.name || 'Unknown Product',
             size: item.sku?.size || '',
             unit: item.sku?.unit || '',
-            price: item.sku?.price || 0,
+            unit_price: item.sku?.price || 0,
             quantity_sold: 0,
             total_sales: 0,
           };
@@ -524,16 +532,50 @@ exports.getCheckStatusReport = async (req, res) => {
     const { date_from, date_to, status } = req.query;
 
     const whereClause = {
-      payment_method: { [Op.in]: ['check', 'cheque'] },
+      payment_method: 'check',
     };
 
-    if (date_from) whereClause.payment_date = { [Op.gte]: date_from };
-    if (date_to) {
-      whereClause.payment_date = {
-        ...whereClause.payment_date,
-        [Op.lte]: date_to,
-      };
+    // Date filtering: use check_date if available, otherwise payment_date
+    if (date_from || date_to) {
+      const dateConditions = [];
+
+      if (date_from && date_to) {
+        dateConditions.push({
+          [Op.or]: [
+            { check_date: { [Op.between]: [date_from, date_to] } },
+            {
+              [Op.and]: [
+                { check_date: null },
+                { payment_date: { [Op.between]: [date_from, date_to] } },
+              ],
+            },
+          ],
+        });
+      } else if (date_from) {
+        dateConditions.push({
+          [Op.or]: [
+            { check_date: { [Op.gte]: date_from } },
+            {
+              [Op.and]: [{ check_date: null }, { payment_date: { [Op.gte]: date_from } }],
+            },
+          ],
+        });
+      } else if (date_to) {
+        dateConditions.push({
+          [Op.or]: [
+            { check_date: { [Op.lte]: date_to } },
+            {
+              [Op.and]: [{ check_date: null }, { payment_date: { [Op.lte]: date_to } }],
+            },
+          ],
+        });
+      }
+
+      if (dateConditions.length > 0) {
+        Object.assign(whereClause, ...dateConditions);
+      }
     }
+
     if (status) whereClause.payment_status = status;
 
     const checks = await Payment.findAll({
@@ -542,41 +584,58 @@ exports.getCheckStatusReport = async (req, res) => {
         {
           model: Outlet,
           as: 'outlet',
-          attributes: ['id', 'name'],
+          attributes: ['id', 'name', 'code'],
         },
       ],
-      order: [['payment_date', 'DESC']],
+      order: [[Sequelize.literal('COALESCE(check_date, payment_date)'), 'DESC']],
     });
 
     // Calculate aging and status
     const now = new Date();
+    now.setHours(0, 0, 0, 0); // Normalize to start of day
+
     const reportData = checks.map(check => {
       const checkDate = new Date(check.check_date || check.payment_date);
+      checkDate.setHours(0, 0, 0, 0); // Normalize to start of day
+
       const daysPending = Math.floor((now - checkDate) / (1000 * 60 * 60 * 24));
+      const checkStatus = check.payment_status || 'pending';
 
       return {
         payment_id: check.id,
-        check_number: check.check_number,
-        check_date: check.check_date,
-        amount: check.amount,
-        payment_status: check.payment_status || 'pending',
-        days_pending: daysPending,
-        outlet_name: check.outlet?.name || 'Unknown',
+        check_number: check.check_number || 'N/A',
+        check_date: check.check_date || check.payment_date,
+        payment_date: check.payment_date,
+        clearance_date: check.clearance_date,
+        bounce_date: check.bounce_date,
+        amount: parseFloat(check.amount || 0),
+        status: checkStatus,
+        days_pending: checkStatus === 'pending' ? daysPending : 0,
+        outlet: {
+          outlet_name: check.outlet?.name || 'Unknown',
+          outlet_code: check.outlet?.code || '',
+        },
         outlet_id: check.outlet_id,
       };
     });
 
     // Calculate summary
+    const pendingChecks = reportData.filter(c => c.status === 'pending');
+    const clearedChecks = reportData.filter(c => c.status === 'cleared');
+    const bouncedChecks = reportData.filter(c => c.status === 'bounced');
+    const overdueChecks = reportData.filter(c => c.status === 'pending' && c.days_pending > 30);
+
     const summary = {
       total_checks: reportData.length,
-      pending: reportData.filter(c => c.payment_status === 'pending').length,
-      cleared: reportData.filter(c => c.payment_status === 'cleared').length,
-      bounced: reportData.filter(c => c.payment_status === 'bounced').length,
-      total_amount: reportData.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0),
-      overdue_30: reportData.filter(c => c.days_pending > 30 && c.payment_status === 'pending')
-        .length,
-      overdue_60: reportData.filter(c => c.days_pending > 60 && c.check_status === 'pending')
-        .length,
+      pending_checks: pendingChecks.length,
+      cleared_checks: clearedChecks.length,
+      bounced_checks: bouncedChecks.length,
+      overdue_checks: overdueChecks.length,
+      pending_amount: pendingChecks.reduce((sum, c) => sum + c.amount, 0),
+      cleared_amount: clearedChecks.reduce((sum, c) => sum + c.amount, 0),
+      bounced_amount: bouncedChecks.reduce((sum, c) => sum + c.amount, 0),
+      overdue_amount: overdueChecks.reduce((sum, c) => sum + c.amount, 0),
+      total_amount: reportData.reduce((sum, c) => sum + c.amount, 0),
     };
 
     return successResponse(
