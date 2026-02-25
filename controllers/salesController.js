@@ -597,33 +597,203 @@ exports.createInvoice = async (req, res) => {
   }
 };
 
-// Update sales invoice
+// Update sales invoice (items, prices, discounts, notes - with full stock reversal and reapplication)
 exports.updateInvoice = async (req, res) => {
   const transaction = await sequelize.transaction();
 
   try {
     const { id } = req.params;
-    const { notes, payment_status } = req.body;
+    const { items, notes, invoice_discount_percent } = req.body;
 
-    const invoice = await SalesInvoice.findByPk(id);
+    // Load existing invoice with its current items
+    const invoice = await SalesInvoice.findByPk(id, {
+      include: [{ model: InvoiceItem, as: 'items' }],
+    });
+
     if (!invoice) {
       await transaction.rollback();
       return errorResponse(res, 'Invoice not found', 404);
     }
 
-    // Only allow updating notes and payment status (not items or amounts)
-    if (notes !== undefined) invoice.notes = notes;
-    if (payment_status !== undefined) invoice.payment_status = payment_status;
+    // --- Step 1: Validate new items if provided ---
+    if (items !== undefined) {
+      if (!Array.isArray(items) || items.length === 0) {
+        await transaction.rollback();
+        return errorResponse(res, 'Invoice must have at least one item', 400);
+      }
 
-    await invoice.save({ transaction });
+      // Pre-check stock for sale items (before any stock changes)
+      for (const item of items) {
+        if (!item.is_return) {
+          const sku = await ProductSku.findByPk(item.sku_id);
+          if (!sku) {
+            await transaction.rollback();
+            return errorResponse(res, `Product SKU ${item.sku_id} not found`, 404);
+          }
+
+          // Calculate how much stock the OLD invoice consumed for this SKU
+          const oldItem = invoice.items.find(i => i.sku_id === item.sku_id && !i.is_return);
+          const stockAfterReversal =
+            parseFloat(sku.current_stock) + (oldItem ? Math.abs(parseFloat(oldItem.quantity)) : 0);
+
+          if (stockAfterReversal < item.quantity) {
+            await transaction.rollback();
+            return errorResponse(
+              res,
+              `Insufficient stock for SKU ${sku.id}. Available after reversal: ${stockAfterReversal}, Required: ${item.quantity}`,
+              400
+            );
+          }
+        }
+      }
+
+      // --- Step 2: Reverse old stock movements ---
+      for (const oldItem of invoice.items) {
+        const sku = await ProductSku.findByPk(oldItem.sku_id, { transaction });
+        if (oldItem.is_return) {
+          // Was a return – reverse: if was added back to stock, remove it again
+          if (oldItem.return_to_stock) {
+            sku.current_stock =
+              parseFloat(sku.current_stock) - Math.abs(parseFloat(oldItem.quantity));
+          }
+        } else {
+          // Was a sale – reverse: add stock back
+          sku.current_stock =
+            parseFloat(sku.current_stock) + Math.abs(parseFloat(oldItem.quantity));
+        }
+        await sku.save({ transaction });
+      }
+
+      // --- Step 3: Delete existing invoice items ---
+      await InvoiceItem.destroy({ where: { invoice_id: id }, transaction });
+
+      // --- Step 4: Process and create new items ---
+      let subtotal = 0;
+      let total_discount_amount = 0;
+      const processedItems = [];
+
+      for (const item of items) {
+        const sku = await ProductSku.findByPk(item.sku_id);
+        if (!sku) {
+          await transaction.rollback();
+          return errorResponse(res, `Product SKU ${item.sku_id} not found`, 404);
+        }
+
+        const quantity = item.quantity;
+        const line_subtotal = Math.abs(quantity) * item.unit_price;
+        const discount_percent = item.discount_percent || 0;
+        const discount_amount = (line_subtotal * discount_percent) / 100;
+        const line_total = line_subtotal - discount_amount;
+
+        const finalQuantity = item.is_return ? -Math.abs(quantity) : Math.abs(quantity);
+        const finalTotal = item.is_return ? -Math.abs(line_total) : line_total;
+
+        subtotal += line_subtotal;
+        total_discount_amount += discount_amount;
+
+        processedItems.push({
+          invoice_id: id,
+          sku_id: item.sku_id,
+          quantity: finalQuantity,
+          unit_price: item.unit_price,
+          discount_percent,
+          discount_amount,
+          total_amount: finalTotal,
+          is_return: item.is_return || false,
+          return_reason: item.return_reason || null,
+          return_to_stock: item.return_to_stock || false,
+          original_invoice_id: item.original_invoice_id || null,
+          original_invoice_item_id: item.original_invoice_item_id || null,
+          return_policy_override: item.return_policy_override || false,
+          return_policy_override_reason: item.return_policy_override_reason || null,
+          return_policy_override_by: item.return_policy_override_by || null,
+        });
+      }
+
+      // --- Step 5: Recalculate invoice totals ---
+      const net_after_item_discounts = subtotal - total_discount_amount;
+      const invoiceDiscountPercent = parseFloat(invoice_discount_percent) || 0;
+      const returnsAmount = processedItems
+        .filter(i => i.is_return)
+        .reduce((sum, i) => sum + Math.abs(i.total_amount), 0);
+      const netForInvoiceDiscount = net_after_item_discounts - returnsAmount;
+      const invoice_discount_amount =
+        netForInvoiceDiscount > 0 ? (netForInvoiceDiscount * invoiceDiscountPercent) / 100 : 0;
+      const total_amount = net_after_item_discounts - invoice_discount_amount;
+
+      // --- Step 6: Update outlet credit balance ---
+      if (invoice.payment_method === 'credit') {
+        const outlet = await Outlet.findByPk(invoice.outlet_id);
+        // Reverse old balance impact and apply new
+        const oldTotal = parseFloat(invoice.total_amount || 0);
+        outlet.balance = parseFloat(outlet.balance || 0) - oldTotal + total_amount;
+        await outlet.save({ transaction });
+      }
+
+      // --- Step 7: Create new invoice items and apply stock ---
+      for (const item of processedItems) {
+        await InvoiceItem.create(item, { transaction });
+
+        const sku = await ProductSku.findByPk(item.sku_id, { transaction });
+        if (item.is_return) {
+          if (item.return_to_stock) {
+            sku.current_stock = parseFloat(sku.current_stock) + Math.abs(parseFloat(item.quantity));
+          }
+        } else {
+          sku.current_stock = parseFloat(sku.current_stock) - Math.abs(parseFloat(item.quantity));
+        }
+        await sku.save({ transaction });
+      }
+
+      // --- Step 8: Update invoice header fields ---
+      invoice.subtotal = subtotal;
+      invoice.discount_percent = invoiceDiscountPercent;
+      invoice.discount_amount = total_discount_amount;
+      invoice.invoice_discount_amount = invoice_discount_amount;
+      invoice.total_amount = total_amount;
+      if (notes !== undefined) invoice.notes = notes;
+      await invoice.save({ transaction });
+    } else {
+      // Items not provided – only update allowed scalar fields
+      if (notes !== undefined) invoice.notes = notes;
+      await invoice.save({ transaction });
+    }
+
     await transaction.commit();
 
     const updatedInvoice = await SalesInvoice.findByPk(id, {
       include: [
-        { model: Outlet, as: 'outlet' },
-        { model: Employee, as: 'salesRef' },
-        { model: Route, as: 'route' },
-        { model: InvoiceItem, as: 'items' },
+        {
+          model: Outlet,
+          as: 'outlet',
+          attributes: [
+            'id',
+            'code',
+            'name',
+            'owner_name',
+            'phone',
+            'address',
+            'balance',
+            'credit_limit',
+          ],
+        },
+        { model: Employee, as: 'salesRef', attributes: ['id', 'code', 'name', 'type'] },
+        { model: Route, as: 'route', attributes: ['id', 'code', 'name'] },
+        {
+          model: InvoiceItem,
+          as: 'items',
+          include: [
+            {
+              model: ProductSku,
+              as: 'sku',
+              attributes: ['id', 'size', 'unit', 'barcode', 'price'],
+              include: [
+                { model: Product, as: 'product', attributes: ['id', 'code', 'name', 'category'] },
+              ],
+            },
+          ],
+        },
+        { model: User, as: 'createdBy', attributes: ['id', 'username', 'role'] },
       ],
     });
 
@@ -631,7 +801,7 @@ exports.updateInvoice = async (req, res) => {
   } catch (error) {
     await transaction.rollback();
     console.error('Error updating invoice:', error);
-    return errorResponse(res, 'Failed to update invoice', 500);
+    return errorResponse(res, error.message || 'Failed to update invoice', 500);
   }
 };
 

@@ -19,8 +19,8 @@ router.get('/:id', salesController.getInvoiceById);
 // Create new sales invoice (cashier/admin)
 router.post('/', roleCheck(['admin', 'cashier']), salesController.createInvoice);
 
-// Update sales invoice (admin only - limited fields)
-router.put('/:id', roleCheck(['admin']), salesController.updateInvoice);
+// Update sales invoice (any authenticated user)
+router.put('/:id', salesController.updateInvoice);
 
 // Delete sales invoice (admin only)
 router.delete('/:id', roleCheck(['admin']), salesController.deleteInvoice);
