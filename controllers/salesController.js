@@ -1149,6 +1149,7 @@ exports.getPurchaseHistory = async (req, res) => {
           item_id: item.id,
           quantity: originalQuantity,
           unit_price: item.unit_price,
+          discount_percent: parseFloat(item.discount_percent || 0),
           already_returned: totalReturned,
           can_return: remainingQuantity,
           days_since_purchase: Math.floor(
