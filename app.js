@@ -20,8 +20,24 @@ const initializeDatabase = async () => {
 app.initializeDatabase = initializeDatabase;
 
 // CORS Configuration
+// Supports ALLOWED_ORIGINS (comma-separated) or CORS_ORIGIN (single) env vars
+const getAllowedOrigins = () => {
+  const raw = process.env.ALLOWED_ORIGINS || process.env.CORS_ORIGIN || 'http://localhost:5173';
+  return raw.split(',').map(o => o.trim().replace(/\/$/, '')); // strip trailing slashes
+};
+const allowedOrigins = getAllowedOrigins();
+
 const corsOptions = {
-  origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  origin: (origin, callback) => {
+    // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
+    if (!origin) return callback(null, true);
+    const normalised = origin.replace(/\/$/, '');
+    if (allowedOrigins.includes(normalised)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`CORS: origin '${origin}' not allowed`));
+    }
+  },
   credentials: true,
   optionsSuccessStatus: 200,
 };
