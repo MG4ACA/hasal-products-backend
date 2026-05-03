@@ -319,11 +319,10 @@ exports.createRecipe = async (req, res) => {
       return errorResponse(res, 'Yield unit is required', 400);
     }
 
-    // Generate recipe code - find the highest number in existing codes
+    // Generate recipe code - find the highest number in ALL existing codes
     const allRecipes = await Recipe.findAll({
       attributes: ['code'],
       order: [['id', 'DESC']],
-      limit: 100, // Check last 100 recipes
       transaction,
     });
 
@@ -421,8 +420,13 @@ exports.updateRecipe = async (req, res) => {
     // Mark current recipe as inactive
     await currentRecipe.update({ is_active: false }, { transaction });
 
-    // Create new version
-    const newVersion = currentRecipe.version + 1;
+    // Find the actual max version for this recipe code to avoid duplicate entry on retry
+    const maxVersionRecipe = await Recipe.findOne({
+      where: { code: currentRecipe.code },
+      order: [['version', 'DESC']],
+      transaction,
+    });
+    const newVersion = (maxVersionRecipe ? maxVersionRecipe.version : currentRecipe.version) + 1;
 
     const newRecipe = await Recipe.create(
       {
