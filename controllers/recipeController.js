@@ -4,6 +4,82 @@ const { Op } = require('sequelize');
 const db = require('../models');
 
 /**
+ * Standard include for RecipeItem with both raw material and product SKU
+ */
+const recipeItemInclude = [
+  {
+    model: RawMaterial,
+    as: 'material',
+    attributes: ['id', 'code', 'name', 'unit'],
+    required: false,
+  },
+  {
+    model: ProductSku,
+    as: 'productSku',
+    required: false,
+    attributes: ['id', 'size', 'unit', 'price', 'average_cost', 'current_stock'],
+    include: [
+      {
+        model: Product,
+        as: 'product',
+        attributes: ['id', 'code', 'name'],
+      },
+    ],
+  },
+];
+
+/**
+ * Create recipe items (handles both raw_material and finished_product types)
+ */
+const createRecipeItems = async (recipeId, items, transaction) => {
+  for (const item of items) {
+    const type = item.material_type || 'raw_material';
+
+    if (type === 'finished_product') {
+      if (!item.product_sku_id || !item.quantity) {
+        throw new Error('Each finished_product item must have product_sku_id and quantity');
+      }
+      const sku = await ProductSku.findByPk(item.product_sku_id, { transaction });
+      if (!sku) {
+        throw new Error(`Product SKU with ID ${item.product_sku_id} not found`);
+      }
+      await RecipeItem.create(
+        {
+          recipe_id: recipeId,
+          material_type: 'finished_product',
+          material_id: null,
+          product_sku_id: item.product_sku_id,
+          quantity: item.quantity,
+          unit: item.unit || sku.unit,
+          unit_cost: item.unit_cost != null ? item.unit_cost : parseFloat(sku.price || 0),
+        },
+        { transaction }
+      );
+    } else {
+      if (!item.material_id || !item.quantity) {
+        throw new Error('Each raw_material item must have material_id and quantity');
+      }
+      const material = await RawMaterial.findByPk(item.material_id, { transaction });
+      if (!material) {
+        throw new Error(`Raw material with ID ${item.material_id} not found`);
+      }
+      await RecipeItem.create(
+        {
+          recipe_id: recipeId,
+          material_type: 'raw_material',
+          material_id: item.material_id,
+          product_sku_id: null,
+          quantity: item.quantity,
+          unit: item.unit || material.unit,
+          unit_cost: null,
+        },
+        { transaction }
+      );
+    }
+  }
+};
+
+/**
  * Calculate weighted average cost for a material from receipt batches only
  * @param {number} materialId - Raw material ID
  * @returns {Promise<number>} Average cost or 0 if no receipt batches
@@ -71,13 +147,7 @@ exports.getAllRecipes = async (req, res) => {
         {
           model: RecipeItem,
           as: 'items',
-          include: [
-            {
-              model: RawMaterial,
-              as: 'material',
-              attributes: ['id', 'code', 'name', 'unit'],
-            },
-          ],
+          include: recipeItemInclude,
         },
         {
           model: Product,
@@ -123,13 +193,7 @@ exports.getRecipeById = async (req, res) => {
         {
           model: RecipeItem,
           as: 'items',
-          include: [
-            {
-              model: RawMaterial,
-              as: 'material',
-              attributes: ['id', 'code', 'name', 'unit'],
-            },
-          ],
+          include: recipeItemInclude,
         },
         {
           model: Product,
@@ -154,19 +218,25 @@ exports.getRecipeById = async (req, res) => {
 
     if (recipe.items && recipe.items.length > 0) {
       for (const item of recipe.items) {
-        const averageCost = item.material ? await calculateAverageCost(item.material.id) : 0;
-        const itemCost = parseFloat(averageCost || 0) * parseFloat(item.quantity || 0);
-        totalCost += itemCost;
-
-        itemsWithCosts.push({
-          ...item.toJSON(),
-          material: item.material
-            ? {
-                ...item.material.toJSON(),
-                average_cost: averageCost,
-              }
-            : null,
-        });
+        if (item.material_type === 'finished_product') {
+          const unitCost = parseFloat(item.unit_cost || item.productSku?.price || 0);
+          const itemCost = unitCost * parseFloat(item.quantity || 0);
+          totalCost += itemCost;
+          itemsWithCosts.push({
+            ...item.toJSON(),
+            cost: itemCost,
+          });
+        } else {
+          const averageCost = item.material ? await calculateAverageCost(item.material.id) : 0;
+          const itemCost = parseFloat(averageCost || 0) * parseFloat(item.quantity || 0);
+          totalCost += itemCost;
+          itemsWithCosts.push({
+            ...item.toJSON(),
+            material: item.material
+              ? { ...item.material.toJSON(), average_cost: averageCost }
+              : null,
+          });
+        }
       }
     }
 
@@ -291,28 +361,11 @@ exports.createRecipe = async (req, res) => {
 
     // Create recipe items if provided
     if (items && items.length > 0) {
-      for (const item of items) {
-        if (!item.material_id || !item.quantity) {
-          await transaction.rollback();
-          return errorResponse(res, 'Each item must have material_id and quantity', 400);
-        }
-
-        // Check if material exists
-        const material = await RawMaterial.findByPk(item.material_id);
-        if (!material) {
-          await transaction.rollback();
-          return errorResponse(res, `Raw material with ID ${item.material_id} not found`, 404);
-        }
-
-        await RecipeItem.create(
-          {
-            recipe_id: recipe.id,
-            material_id: item.material_id,
-            quantity: item.quantity,
-            unit: item.unit || material.unit,
-          },
-          { transaction }
-        );
+      try {
+        await createRecipeItems(recipe.id, items, transaction);
+      } catch (err) {
+        await transaction.rollback();
+        return errorResponse(res, err.message, 400);
       }
     }
 
@@ -324,13 +377,7 @@ exports.createRecipe = async (req, res) => {
         {
           model: RecipeItem,
           as: 'items',
-          include: [
-            {
-              model: RawMaterial,
-              as: 'material',
-              attributes: ['id', 'code', 'name', 'unit'],
-            },
-          ],
+          include: recipeItemInclude,
         },
         {
           model: Product,
@@ -394,28 +441,11 @@ exports.updateRecipe = async (req, res) => {
 
     // Create new recipe items
     if (items && items.length > 0) {
-      for (const item of items) {
-        if (!item.material_id || !item.quantity) {
-          await transaction.rollback();
-          return errorResponse(res, 'Each item must have material_id and quantity', 400);
-        }
-
-        // Check if material exists
-        const material = await RawMaterial.findByPk(item.material_id);
-        if (!material) {
-          await transaction.rollback();
-          return errorResponse(res, `Raw material with ID ${item.material_id} not found`, 404);
-        }
-
-        await RecipeItem.create(
-          {
-            recipe_id: newRecipe.id,
-            material_id: item.material_id,
-            quantity: item.quantity,
-            unit: item.unit || material.unit,
-          },
-          { transaction }
-        );
+      try {
+        await createRecipeItems(newRecipe.id, items, transaction);
+      } catch (err) {
+        await transaction.rollback();
+        return errorResponse(res, err.message, 400);
       }
     }
 
@@ -427,13 +457,7 @@ exports.updateRecipe = async (req, res) => {
         {
           model: RecipeItem,
           as: 'items',
-          include: [
-            {
-              model: RawMaterial,
-              as: 'material',
-              attributes: ['id', 'code', 'name', 'unit'],
-            },
-          ],
+          include: recipeItemInclude,
         },
       ],
     });
@@ -500,13 +524,7 @@ exports.getRecipeVersions = async (req, res) => {
         {
           model: RecipeItem,
           as: 'items',
-          include: [
-            {
-              model: RawMaterial,
-              as: 'material',
-              attributes: ['id', 'code', 'name', 'unit'],
-            },
-          ],
+          include: recipeItemInclude,
         },
       ],
       order: [['version', 'DESC']],

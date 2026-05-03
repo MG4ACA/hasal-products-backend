@@ -15,6 +15,44 @@ const db = require('../models');
 const { generateFinishedGoodsBatchNumber } = require('../utils/batchNumberGenerator');
 
 /**
+ * Standard include for ProductionMaterial covering both raw material and finished product inputs
+ */
+const productionMaterialInclude = [
+  {
+    model: RawMaterialBatch,
+    as: 'batch',
+    required: false,
+    attributes: ['id', 'batch_number', 'expiry_date', 'unit_cost'],
+    include: [
+      {
+        model: RawMaterial,
+        as: 'material',
+        attributes: ['id', 'code', 'name', 'unit'],
+      },
+    ],
+  },
+  {
+    model: ProductSku,
+    as: 'productSku',
+    required: false,
+    attributes: ['id', 'size', 'unit', 'price', 'average_cost'],
+    include: [
+      {
+        model: Product,
+        as: 'product',
+        attributes: ['id', 'code', 'name'],
+      },
+    ],
+  },
+  {
+    model: ProductionOutput,
+    as: 'productOutput',
+    required: false,
+    attributes: ['id', 'batch_number', 'production_date', 'unit_cost'],
+  },
+];
+
+/**
  * Get all production runs with pagination and filters
  * GET /api/production-runs
  */
@@ -150,20 +188,7 @@ exports.getProductionRunById = async (req, res) => {
         {
           model: ProductionMaterial,
           as: 'materials',
-          include: [
-            {
-              model: RawMaterialBatch,
-              as: 'batch',
-              attributes: ['id', 'batch_number', 'expiry_date', 'unit_cost'],
-              include: [
-                {
-                  model: RawMaterial,
-                  as: 'material',
-                  attributes: ['id', 'code', 'name', 'unit'],
-                },
-              ],
-            },
-          ],
+          include: productionMaterialInclude,
         },
         {
           model: ProductionOutput,
@@ -430,6 +455,11 @@ exports.startProductionRun = async (req, res) => {
                   model: RawMaterial,
                   as: 'material',
                 },
+                {
+                  model: ProductSku,
+                  as: 'productSku',
+                  include: [{ model: Product, as: 'product', attributes: ['id', 'code', 'name'] }],
+                },
               ],
             },
           ],
@@ -464,65 +494,139 @@ exports.startProductionRun = async (req, res) => {
     for (const item of productionRun.recipe.items) {
       const requiredQuantity = parseFloat(item.quantity) * scaleFactor;
 
-      // Get available batches (FIFO: oldest first, exclude expired and disposed returns)
-      const batches = await RawMaterialBatch.findAll({
-        where: {
-          material_id: item.material_id,
-          quantity: { [Op.gt]: 0 },
-          batch_type: 'receipt', // Only use receipt batches
-          expiry_date: { [Op.or]: [null, { [Op.gt]: new Date() }] },
-        },
-        order: [['created_at', 'ASC']], // FIFO: oldest first
-        transaction,
-      });
+      if (item.material_type === 'finished_product') {
+        // --- Finished product input: FIFO on ProductionOutput batches ---
+        const skuId = item.product_sku_id;
+        const sku = item.productSku;
+        const ingredientName = sku
+          ? `${sku.product?.name || ''} ${sku.size || ''} ${sku.unit || ''}`.trim()
+          : `SKU #${skuId}`;
 
-      let remainingQuantity = requiredQuantity;
-      const materialsUsed = [];
-
-      // Deduct from batches using FIFO with cost tracking
-      for (const batch of batches) {
-        if (remainingQuantity <= 0) break;
-
-        const availableInBatch = parseFloat(batch.quantity);
-        const quantityToDeduct = Math.min(remainingQuantity, availableInBatch);
-
-        // Calculate cost for this deduction
-        const costFromBatch = parseFloat(batch.unit_cost || 0) * quantityToDeduct;
-        totalMaterialCost += costFromBatch;
-
-        // Update batch quantity
-        await batch.update(
-          {
-            quantity: parseFloat(batch.quantity) - quantityToDeduct,
+        const outputBatches = await ProductionOutput.findAll({
+          where: {
+            sku_id: skuId,
+            quantity_produced: { [Op.gt]: 0 },
           },
-          { transaction }
-        );
-
-        // Record material usage
-        materialsUsed.push({
-          production_run_id: id,
-          batch_id: batch.id,
-          quantity_used: quantityToDeduct,
+          order: [['id', 'ASC']], // FIFO: oldest first
+          transaction,
         });
 
-        remainingQuantity -= quantityToDeduct;
-      }
+        let remaining = requiredQuantity;
+        const materialsUsed = [];
 
-      // Check if we have enough materials
-      if (remainingQuantity > 0) {
-        await transaction.rollback();
-        return errorResponse(
-          res,
-          `Insufficient stock for ${item.material.name}. Required: ${requiredQuantity.toFixed(
-            2
-          )}, Available: ${(requiredQuantity - remainingQuantity).toFixed(2)}`,
-          400
-        );
-      }
+        for (const outputBatch of outputBatches) {
+          if (remaining <= 0) break;
+          const available = parseFloat(outputBatch.quantity_produced);
+          const toDeduct = Math.min(remaining, available);
+          const unitCost = parseFloat(item.unit_cost || sku?.price || 0);
 
-      // Bulk create production materials
-      if (materialsUsed.length > 0) {
-        await ProductionMaterial.bulkCreate(materialsUsed, { transaction });
+          totalMaterialCost += unitCost * toDeduct;
+
+          await outputBatch.update(
+            { quantity_produced: available - toDeduct },
+            { transaction }
+          );
+
+          materialsUsed.push({
+            production_run_id: id,
+            material_type: 'finished_product',
+            batch_id: null,
+            product_sku_id: skuId,
+            product_output_id: outputBatch.id,
+            quantity_used: toDeduct,
+            unit_cost: unitCost,
+          });
+
+          remaining -= toDeduct;
+        }
+
+        if (remaining > 0) {
+          await transaction.rollback();
+          return errorResponse(
+            res,
+            `Insufficient stock for ${ingredientName}. Required: ${requiredQuantity.toFixed(
+              2
+            )}, Available: ${(requiredQuantity - remaining).toFixed(2)}`,
+            400
+          );
+        }
+
+        // Deduct from ProductSku.current_stock
+        await ProductSku.decrement('current_stock', {
+          by: requiredQuantity,
+          where: { id: skuId },
+          transaction,
+        });
+
+        if (materialsUsed.length > 0) {
+          await ProductionMaterial.bulkCreate(materialsUsed, { transaction });
+        }
+      } else {
+        // --- Raw material input: FIFO on RawMaterialBatch ---
+
+        // Get available batches (FIFO: oldest first, exclude expired and disposed returns)
+        const batches = await RawMaterialBatch.findAll({
+          where: {
+            material_id: item.material_id,
+            quantity: { [Op.gt]: 0 },
+            batch_type: 'receipt', // Only use receipt batches
+            expiry_date: { [Op.or]: [null, { [Op.gt]: new Date() }] },
+          },
+          order: [['created_at', 'ASC']], // FIFO: oldest first
+          transaction,
+        });
+
+        let remainingQuantity = requiredQuantity;
+        const materialsUsed = [];
+
+        // Deduct from batches using FIFO with cost tracking
+        for (const batch of batches) {
+          if (remainingQuantity <= 0) break;
+
+          const availableInBatch = parseFloat(batch.quantity);
+          const quantityToDeduct = Math.min(remainingQuantity, availableInBatch);
+
+          // Calculate cost for this deduction
+          const costFromBatch = parseFloat(batch.unit_cost || 0) * quantityToDeduct;
+          totalMaterialCost += costFromBatch;
+
+          // Update batch quantity
+          await batch.update(
+            {
+              quantity: parseFloat(batch.quantity) - quantityToDeduct,
+            },
+            { transaction }
+          );
+
+          // Record material usage
+          materialsUsed.push({
+            production_run_id: id,
+            material_type: 'raw_material',
+            batch_id: batch.id,
+            product_sku_id: null,
+            product_output_id: null,
+            quantity_used: quantityToDeduct,
+          });
+
+          remainingQuantity -= quantityToDeduct;
+        }
+
+        // Check if we have enough materials
+        if (remainingQuantity > 0) {
+          await transaction.rollback();
+          return errorResponse(
+            res,
+            `Insufficient stock for ${item.material.name}. Required: ${requiredQuantity.toFixed(
+              2
+            )}, Available: ${(requiredQuantity - remainingQuantity).toFixed(2)}`,
+            400
+          );
+        }
+
+        // Bulk create production materials
+        if (materialsUsed.length > 0) {
+          await ProductionMaterial.bulkCreate(materialsUsed, { transaction });
+        }
       }
     }
 
@@ -552,13 +656,7 @@ exports.startProductionRun = async (req, res) => {
         {
           model: ProductionMaterial,
           as: 'materials',
-          include: [
-            {
-              model: RawMaterialBatch,
-              as: 'batch',
-              attributes: ['id', 'batch_number', 'expiry_date', 'unit_cost'],
-            },
-          ],
+          include: productionMaterialInclude,
         },
       ],
     });
@@ -1013,8 +1111,8 @@ exports.getEfficiencyReport = async (req, res) => {
       average_efficiency:
         report.length > 0
           ? (
-              report.reduce((sum, r) => sum + parseFloat(r.yield_efficiency), 0) / report.length
-            ).toFixed(2)
+            report.reduce((sum, r) => sum + parseFloat(r.yield_efficiency), 0) / report.length
+          ).toFixed(2)
           : '0.00',
       total_expected: report
         .reduce((sum, r) => sum + parseFloat(r.expected_quantity), 0)

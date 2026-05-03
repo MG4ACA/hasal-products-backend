@@ -16,11 +16,24 @@ module.exports = (sequelize, DataTypes) => {
         },
         onDelete: 'CASCADE',
       },
+      material_type: {
+        type: DataTypes.ENUM('raw_material', 'finished_product'),
+        allowNull: false,
+        defaultValue: 'raw_material',
+      },
       material_id: {
         type: DataTypes.INTEGER,
-        allowNull: false,
+        allowNull: true,
         references: {
           model: 'raw_materials',
+          key: 'id',
+        },
+      },
+      product_sku_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+          model: 'product_skus',
           key: 'id',
         },
       },
@@ -31,6 +44,12 @@ module.exports = (sequelize, DataTypes) => {
       unit: {
         type: DataTypes.STRING(20),
         allowNull: false,
+      },
+      unit_cost: {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: true,
+        defaultValue: null,
+        comment: 'For finished_product items: price used for costing (editable)',
       },
     },
     {

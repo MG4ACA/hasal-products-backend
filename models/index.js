@@ -98,6 +98,8 @@ db.Recipe.belongsTo(db.ProductSku, { foreignKey: 'product_sku_id', as: 'productS
 // RecipeItem associations
 db.RecipeItem.belongsTo(db.Recipe, { foreignKey: 'recipe_id', as: 'recipe' });
 db.RecipeItem.belongsTo(db.RawMaterial, { foreignKey: 'material_id', as: 'material' });
+db.RecipeItem.belongsTo(db.ProductSku, { foreignKey: 'product_sku_id', as: 'productSku' });
+db.ProductSku.hasMany(db.RecipeItem, { foreignKey: 'product_sku_id', as: 'recipeSkuItems' });
 
 // Product associations
 db.Product.hasMany(db.ProductSku, { foreignKey: 'product_id', as: 'skus' });
@@ -124,6 +126,15 @@ db.ProductionMaterial.belongsTo(db.ProductionRun, {
   as: 'productionRun',
 });
 db.ProductionMaterial.belongsTo(db.RawMaterialBatch, { foreignKey: 'batch_id', as: 'batch' });
+db.ProductionMaterial.belongsTo(db.ProductSku, { foreignKey: 'product_sku_id', as: 'productSku' });
+db.ProductionMaterial.belongsTo(db.ProductionOutput, {
+  foreignKey: 'product_output_id',
+  as: 'productOutput',
+});
+db.ProductionOutput.hasMany(db.ProductionMaterial, {
+  foreignKey: 'product_output_id',
+  as: 'usedInMaterials',
+});
 
 // ProductionOutput associations
 db.ProductionOutput.belongsTo(db.ProductionRun, {
