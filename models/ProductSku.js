@@ -17,7 +17,7 @@ module.exports = (sequelize, DataTypes) => {
       },
       size: {
         type: DataTypes.STRING(20),
-        allowNull: false,
+        allowNull: true,
       },
       unit: {
         type: DataTypes.STRING(20),
@@ -60,6 +60,12 @@ module.exports = (sequelize, DataTypes) => {
       status: {
         type: DataTypes.ENUM('active', 'inactive'),
         defaultValue: 'active',
+      },
+      is_loose: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+        comment: 'True for loose/bulk SKUs that have no fixed size',
       },
     },
     {

@@ -1,4 +1,4 @@
-const { RawMaterial, RawMaterialBatch, sequelize } = require('../models');
+const { RawMaterial, RawMaterialBatch, RecipeItem, PoItem, sequelize } = require('../models');
 const { successResponse, errorResponse } = require('../utils/response');
 const { Op } = require('sequelize');
 
@@ -245,7 +245,7 @@ exports.updateRawMaterial = async (req, res) => {
   }
 };
 
-// DELETE /api/raw-materials/:id - Delete raw material
+// DELETE /api/raw-materials/:id - Hard delete raw material
 exports.deleteRawMaterial = async (req, res) => {
   try {
     const { id } = req.params;
@@ -256,21 +256,44 @@ exports.deleteRawMaterial = async (req, res) => {
       return errorResponse(res, 'Raw material not found', 404);
     }
 
-    // Check if raw material has any batches
-    const batchCount = await RawMaterialBatch.count({
+    // Block if used in any recipe
+    const recipeItemCount = await RecipeItem.count({
       where: { material_id: id },
     });
-
-    if (batchCount > 0) {
+    if (recipeItemCount > 0) {
       return errorResponse(
         res,
-        'Cannot delete raw material with existing batches. Set status to inactive instead.',
+        'Cannot delete: this raw material is used in one or more recipes.',
         400
       );
     }
 
-    // Soft delete by setting status to inactive
-    await rawMaterial.update({ status: 'inactive' });
+    // Block if referenced in any purchase order
+    const poItemCount = await PoItem.count({
+      where: { material_id: id },
+    });
+    if (poItemCount > 0) {
+      return errorResponse(
+        res,
+        'Cannot delete: this raw material has purchase order records.',
+        400
+      );
+    }
+
+    // Block if stock batches exist (inventory / production history)
+    const batchCount = await RawMaterialBatch.count({
+      where: { material_id: id },
+    });
+    if (batchCount > 0) {
+      return errorResponse(
+        res,
+        'Cannot delete: this raw material has stock or batch history.',
+        400
+      );
+    }
+
+    // Safe to permanently delete
+    await rawMaterial.destroy();
 
     return successResponse(res, { message: 'Raw material deleted successfully' });
   } catch (error) {

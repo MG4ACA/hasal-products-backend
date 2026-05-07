@@ -522,10 +522,7 @@ exports.startProductionRun = async (req, res) => {
 
           totalMaterialCost += unitCost * toDeduct;
 
-          await outputBatch.update(
-            { quantity_produced: available - toDeduct },
-            { transaction }
-          );
+          await outputBatch.update({ quantity_produced: available - toDeduct }, { transaction });
 
           materialsUsed.push({
             production_run_id: id,
@@ -760,65 +757,96 @@ exports.completeProductionRun = async (req, res) => {
     const finishedGoodsCost = baseUnitCost * parseFloat(quantity_produced);
     const wasteCost = baseUnitCost * wasteQty;
 
-    // Get target SKU (from recipe or from outputs)
-    const targetSkuId = outputs[0]?.sku_id || productionRun.recipe.product_sku_id;
+    // --- Multi-output: distribute quantity across one or more SKUs ---
 
-    if (!targetSkuId) {
-      await transaction.rollback();
-      return errorResponse(res, 'Product SKU is required for production output', 400);
+    // Build effective outputs list (fall back to recipe SKU if no outputs provided)
+    let effectiveOutputs = outputs && outputs.length > 0 ? outputs : [];
+    if (effectiveOutputs.length === 0) {
+      const fallbackSkuId = productionRun.recipe.product_sku_id;
+      if (!fallbackSkuId) {
+        await transaction.rollback();
+        return errorResponse(res, 'At least one output SKU is required for production output', 400);
+      }
+      effectiveOutputs = [{ sku_id: fallbackSkuId, quantity: parseFloat(quantity_produced) }];
     }
 
-    const targetSku = await ProductSku.findByPk(targetSkuId, { transaction });
-
-    if (!targetSku) {
-      await transaction.rollback();
-      return errorResponse(res, 'Product SKU not found', 404);
+    // Validate each output entry
+    for (const output of effectiveOutputs) {
+      if (!output.sku_id) {
+        await transaction.rollback();
+        return errorResponse(res, 'Each output must have a sku_id', 400);
+      }
+      if (!output.quantity || parseFloat(output.quantity) <= 0) {
+        await transaction.rollback();
+        return errorResponse(res, 'Each output must have a positive quantity', 400);
+      }
     }
 
-    // Generate finished goods batch number
-    const finishedGoodsBatchNumber = await generateFinishedGoodsBatchNumber(
-      targetSkuId,
-      productionRun.production_date
+    // Sum of all output quantities (used as actual_quantity)
+    const totalQuantityProduced = effectiveOutputs.reduce(
+      (sum, o) => sum + parseFloat(o.quantity),
+      0
     );
 
-    // Update SKU average cost (weighted average)
-    const currentStock = parseFloat(targetSku.current_stock || 0);
-    const currentAvgCost = parseFloat(targetSku.average_cost || 0);
-    const newQuantity = parseFloat(quantity_produced);
-    const newUnitCost = baseUnitCost; // Use base cost (not inflated by waste)
+    // Recalculate cost denominators based on actual outputs total
+    const totalOutputPlusWaste = totalQuantityProduced + wasteQty;
+    const adjustedBaseUnitCost =
+      totalOutputPlusWaste > 0 ? totalMaterialCost / totalOutputPlusWaste : 0;
+    const adjustedWasteCost = adjustedBaseUnitCost * wasteQty;
 
-    const totalValue = currentStock * currentAvgCost + newQuantity * newUnitCost;
-    const totalQuantity = currentStock + newQuantity;
-    const newAvgCost = totalQuantity > 0 ? totalValue / totalQuantity : newUnitCost;
+    // Process each output
+    for (const output of effectiveOutputs) {
+      const outQty = parseFloat(output.quantity);
+      const targetSku = await ProductSku.findByPk(output.sku_id, { transaction });
 
-    // Update product SKU stock and average cost
-    await targetSku.update(
-      {
-        current_stock: totalQuantity,
-        average_cost: newAvgCost.toFixed(2),
-        material_cost: newAvgCost.toFixed(2), // For now, same as average (overhead added in P8)
-        cost_last_updated: new Date(),
-      },
-      { transaction }
-    );
+      if (!targetSku) {
+        await transaction.rollback();
+        return errorResponse(res, `Product SKU ${output.sku_id} not found`, 404);
+      }
 
-    // Create production output with batch number and cost
-    await ProductionOutput.create(
-      {
-        production_run_id: id,
-        sku_id: targetSkuId,
-        quantity_produced,
-        batch_number: finishedGoodsBatchNumber,
-        production_date: productionRun.production_date,
-        unit_cost: baseUnitCost.toFixed(2), // Base cost per unit
-        total_cost: finishedGoodsCost.toFixed(2), // Cost for finished goods only
-        waste_cost: wasteCost.toFixed(2), // Waste cost tracked separately
-      },
-      { transaction }
-    );
+      // Weighted average cost update for this SKU
+      const currentStock = parseFloat(targetSku.current_stock || 0);
+      const currentAvgCost = parseFloat(targetSku.average_cost || 0);
+      const totalValue = currentStock * currentAvgCost + outQty * adjustedBaseUnitCost;
+      const totalQty = currentStock + outQty;
+      const newAvgCost = totalQty > 0 ? totalValue / totalQty : adjustedBaseUnitCost;
+
+      await targetSku.update(
+        {
+          current_stock: totalQty,
+          average_cost: newAvgCost.toFixed(2),
+          material_cost: newAvgCost.toFixed(2),
+          cost_last_updated: new Date(),
+        },
+        { transaction }
+      );
+
+      // Generate batch number per SKU
+      const batchNumber = await generateFinishedGoodsBatchNumber(
+        output.sku_id,
+        productionRun.production_date
+      );
+
+      const outCost = adjustedBaseUnitCost * outQty;
+
+      await ProductionOutput.create(
+        {
+          production_run_id: id,
+          sku_id: output.sku_id,
+          quantity_produced: outQty,
+          batch_number: batchNumber,
+          production_date: productionRun.production_date,
+          unit_cost: adjustedBaseUnitCost.toFixed(2),
+          total_cost: outCost.toFixed(2),
+          waste_cost:
+            effectiveOutputs.indexOf(output) === 0 ? adjustedWasteCost.toFixed(2) : '0.00',
+        },
+        { transaction }
+      );
+    }
 
     // Calculate yield efficiency
-    const actualQuantity = parseFloat(quantity_produced);
+    const actualQuantity = totalQuantityProduced;
     const expectedQuantity = parseFloat(productionRun.expected_quantity || 0);
     const yieldEfficiency = expectedQuantity > 0 ? (actualQuantity / expectedQuantity) * 100 : 0;
 
@@ -1111,8 +1139,8 @@ exports.getEfficiencyReport = async (req, res) => {
       average_efficiency:
         report.length > 0
           ? (
-            report.reduce((sum, r) => sum + parseFloat(r.yield_efficiency), 0) / report.length
-          ).toFixed(2)
+              report.reduce((sum, r) => sum + parseFloat(r.yield_efficiency), 0) / report.length
+            ).toFixed(2)
           : '0.00',
       total_expected: report
         .reduce((sum, r) => sum + parseFloat(r.expected_quantity), 0)

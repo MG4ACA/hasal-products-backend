@@ -18,6 +18,7 @@ router.put('/:id', roleCheck(['admin', 'manager']), productController.updateProd
 router.delete('/:id', roleCheck(['admin']), productController.deleteProduct);
 
 // SKU routes
+router.post('/:id/loose-sku', roleCheck(['admin', 'manager']), productController.createLooseSku);
 router.post('/:id/skus', roleCheck(['admin', 'manager']), productController.addSku);
 router.put('/:productId/skus/:skuId', roleCheck(['admin', 'manager']), productController.updateSku);
 router.delete('/:productId/skus/:skuId', roleCheck(['admin']), productController.deleteSku);

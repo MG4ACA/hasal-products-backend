@@ -35,7 +35,16 @@ exports.getAllProducts = async (req, res) => {
         {
           model: ProductSku,
           as: 'skus',
-          attributes: ['id', 'size', 'unit', 'barcode', 'price', 'current_stock', 'status'],
+          attributes: [
+            'id',
+            'size',
+            'unit',
+            'barcode',
+            'price',
+            'current_stock',
+            'status',
+            'is_loose',
+          ],
         },
       ],
       order: [['created_at', 'DESC']],
@@ -68,7 +77,16 @@ exports.getProductById = async (req, res) => {
         {
           model: ProductSku,
           as: 'skus',
-          attributes: ['id', 'size', 'unit', 'barcode', 'price', 'current_stock', 'status'],
+          attributes: [
+            'id',
+            'size',
+            'unit',
+            'barcode',
+            'price',
+            'current_stock',
+            'status',
+            'is_loose',
+          ],
         },
       ],
     });
@@ -216,6 +234,49 @@ exports.deleteProduct = async (req, res) => {
   } catch (error) {
     console.error('Error deleting product:', error);
     return errorResponse(res, 'Failed to delete product', 500);
+  }
+};
+
+/**
+ * Create a Loose/Bulk SKU for a product (no fixed size)
+ * POST /api/products/:id/loose-sku
+ */
+exports.createLooseSku = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { unit } = req.body;
+
+    if (!unit) {
+      return errorResponse(res, 'Unit is required for loose SKU', 400);
+    }
+
+    const product = await Product.findByPk(id);
+    if (!product) {
+      return errorResponse(res, 'Product not found', 404);
+    }
+
+    // Enforce only one loose SKU per product
+    const existingLoose = await ProductSku.findOne({
+      where: { product_id: id, is_loose: true },
+    });
+    if (existingLoose) {
+      return errorResponse(res, 'A loose SKU already exists for this product', 400);
+    }
+
+    const sku = await ProductSku.create({
+      product_id: id,
+      size: null,
+      unit,
+      price: 0,
+      current_stock: 0,
+      status: 'active',
+      is_loose: true,
+    });
+
+    return successResponse(res, sku, 201);
+  } catch (error) {
+    console.error('Error creating loose SKU:', error);
+    return errorResponse(res, 'Failed to create loose SKU', 500);
   }
 };
 
