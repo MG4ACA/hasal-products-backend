@@ -275,8 +275,12 @@ exports.createLooseSku = async (req, res) => {
 
     return successResponse(res, sku, 201);
   } catch (error) {
-    console.error('Error creating loose SKU:', error);
-    return errorResponse(res, 'Failed to create loose SKU', 500);
+    console.error('Error creating loose SKU:', error.message);
+    console.error('Error stack:', error.stack);
+    if (error.errors) {
+      console.error('Validation errors:', error.errors);
+    }
+    return errorResponse(res, `Failed to create loose SKU: ${error.message}`, 500);
   }
 };
 

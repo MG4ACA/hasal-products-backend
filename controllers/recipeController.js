@@ -412,7 +412,7 @@ exports.updateRecipe = async (req, res) => {
 
   try {
     const { id } = req.params;
-    const { name, expected_yield, yield_unit, notes, items = [] } = req.body;
+    const { name, expected_yield, yield_unit, notes, product_sku_id, items = [] } = req.body;
 
     const currentRecipe = await Recipe.findByPk(id);
 
@@ -437,7 +437,8 @@ exports.updateRecipe = async (req, res) => {
         code: currentRecipe.code,
         name: name || currentRecipe.name,
         product_id: currentRecipe.product_id,
-        product_sku_id: currentRecipe.product_sku_id,
+        product_sku_id:
+          product_sku_id !== undefined ? product_sku_id : currentRecipe.product_sku_id,
         version: newVersion,
         expected_yield: expected_yield || currentRecipe.expected_yield,
         yield_unit: yield_unit || currentRecipe.yield_unit,
