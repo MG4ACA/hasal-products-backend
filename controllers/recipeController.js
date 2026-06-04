@@ -437,8 +437,7 @@ exports.updateRecipe = async (req, res) => {
         code: currentRecipe.code,
         name: name || currentRecipe.name,
         product_id: currentRecipe.product_id,
-        product_sku_id:
-          product_sku_id !== undefined ? product_sku_id : currentRecipe.product_sku_id,
+        product_sku_id: product_sku_id !== undefined ? product_sku_id : currentRecipe.product_sku_id,
         version: newVersion,
         expected_yield: expected_yield || currentRecipe.expected_yield,
         yield_unit: yield_unit || currentRecipe.yield_unit,
