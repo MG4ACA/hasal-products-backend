@@ -555,11 +555,11 @@ exports.createInvoice = async (req, res) => {
       if (item.is_return) {
         // For returns: if return_to_stock is true, add back to stock; otherwise, don't change stock
         if (item.return_to_stock) {
-          sku.current_stock += Math.abs(item.quantity); // Add back (quantity is negative, so use abs)
+          sku.current_stock = parseFloat(sku.current_stock) + Math.abs(parseFloat(item.quantity)); // Add back (quantity is negative, so use abs)
         }
       } else {
         // For sales: reduce stock
-        sku.current_stock -= item.quantity;
+        sku.current_stock = parseFloat(sku.current_stock) - parseFloat(item.quantity);
       }
 
       await sku.save({ transaction });
@@ -823,16 +823,16 @@ exports.deleteInvoice = async (req, res) => {
 
     // Reverse stock movements
     for (const item of invoice.items) {
-      const sku = await ProductSku.findByPk(item.sku_id);
+      const sku = await ProductSku.findByPk(item.sku_id, { transaction });
 
       if (item.is_return) {
         // Reverse return: if was returned to stock, remove it again
         if (item.return_to_stock) {
-          sku.current_stock -= Math.abs(item.quantity);
+          sku.current_stock = parseFloat(sku.current_stock) - Math.abs(parseFloat(item.quantity));
         }
       } else {
         // Reverse sale: add stock back
-        sku.current_stock += Math.abs(item.quantity);
+        sku.current_stock = parseFloat(sku.current_stock) + Math.abs(parseFloat(item.quantity));
       }
 
       await sku.save({ transaction });

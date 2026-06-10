@@ -2,6 +2,7 @@ require('dotenv').config();
 const db = require('../models');
 const seedDatabase = require('./seeders');
 const seedProducts = require('./seed-products');
+const seedOutlets = require('./seed-outlets');
 
 const seed = async () => {
   try {
@@ -16,6 +17,9 @@ const seed = async () => {
 
     // Seed products and SKUs from CSV
     await seedProducts();
+
+    // Seed outlets from CSV
+    await seedOutlets();
 
     console.log('✅ Database seeding completed successfully');
     process.exit(0);

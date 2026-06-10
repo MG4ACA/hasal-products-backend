@@ -82,7 +82,7 @@ exports.getAllRawMaterials = async (req, res) => {
       order: [[sortBy, sortOrder]],
     });
 
-    // Calculate current stock and average cost for each material
+    // Calculate current stock, average cost, and last purchase price for each material
     const materialsWithStock = await Promise.all(
       rows.map(async material => {
         const stockResult = await RawMaterialBatch.findOne({
@@ -93,10 +93,20 @@ exports.getAllRawMaterials = async (req, res) => {
         const totalStock = parseFloat(stockResult?.dataValues?.total_stock || 0);
         const averageCost = await calculateAverageCost(material.id);
 
+        // Get the most recent receipt batch to show last purchase price
+        const lastBatch = await RawMaterialBatch.findOne({
+          where: { material_id: material.id, batch_type: 'receipt' },
+          order: [['created_at', 'DESC']],
+          attributes: ['unit_cost', 'purchase_date', 'batch_number'],
+        });
+
         return {
           ...material.toJSON(),
           current_stock: totalStock,
           average_cost: averageCost,
+          last_unit_cost: lastBatch ? parseFloat(lastBatch.unit_cost) : null,
+          last_purchase_date: lastBatch ? lastBatch.purchase_date : null,
+          last_batch_number: lastBatch ? lastBatch.batch_number : null,
         };
       })
     );
