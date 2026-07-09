@@ -97,12 +97,15 @@ exports.getSalesReport = async (req, res) => {
     const dailySales = {};
 
     invoices.forEach(invoice => {
-      const invoiceTotal = parseFloat(invoice.total_amount) || 0;
-      const invoiceDiscount = parseFloat(invoice.discount_amount) || 0;
+      const invoiceSubtotal = parseFloat(invoice.subtotal) || 0;
+      const invoiceDiscount =
+        (parseFloat(invoice.discount_amount) || 0) +
+        (parseFloat(invoice.invoice_discount_amount) || 0);
+      const invoiceNetSales = parseFloat(invoice.total_amount) || 0;
 
-      summary.total_sales += invoiceTotal;
+      summary.total_sales += invoiceSubtotal;
       summary.total_discount += invoiceDiscount;
-      summary.net_sales += invoiceTotal - invoiceDiscount;
+      summary.net_sales += invoiceNetSales;
 
       // By outlet
       const outletKey = invoice.outlet_id;
@@ -118,9 +121,9 @@ exports.getSalesReport = async (req, res) => {
         };
       }
       salesByOutlet[outletKey].invoices += 1;
-      salesByOutlet[outletKey].total_sales += invoiceTotal;
+      salesByOutlet[outletKey].total_sales += invoiceSubtotal;
       salesByOutlet[outletKey].total_discount += invoiceDiscount;
-      salesByOutlet[outletKey].net_sales += invoiceTotal - invoiceDiscount;
+      salesByOutlet[outletKey].net_sales += invoiceNetSales;
 
       // By route
       if (invoice.route_id) {
@@ -135,8 +138,8 @@ exports.getSalesReport = async (req, res) => {
           };
         }
         salesByRoute[routeKey].invoices += 1;
-        salesByRoute[routeKey].total_sales += invoiceTotal;
-        salesByRoute[routeKey].net_sales += invoiceTotal - invoiceDiscount;
+        salesByRoute[routeKey].total_sales += invoiceSubtotal;
+        salesByRoute[routeKey].net_sales += invoiceNetSales;
       }
 
       // Daily sales
@@ -151,8 +154,8 @@ exports.getSalesReport = async (req, res) => {
           };
         }
         dailySales[dateKey].invoices += 1;
-        dailySales[dateKey].total_sales += invoiceTotal;
-        dailySales[dateKey].net_sales += invoiceTotal - invoiceDiscount;
+        dailySales[dateKey].total_sales += invoiceSubtotal;
+        dailySales[dateKey].net_sales += invoiceNetSales;
       }
 
       // By product
